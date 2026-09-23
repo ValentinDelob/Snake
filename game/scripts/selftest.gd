@@ -19,6 +19,10 @@ const MIN_ACCEPTABLE_FPS := 25.0
 const TURN_HOLD := 0.7          # seconds a turn key stays down
 const SPACING_TOLERANCE := 0.25 # relative error allowed between body segments
 const MAX_RETRIES := 6
+## Godot writes its own errors into the same log file, so the test can read
+## them back. A looping tween on a freed panel once shipped exactly because
+## nothing here was watching for engine errors.
+const LOG_PATH := "user://logs/snake.log"
 const TURN_ROOM := 6.0            # world units of clearance wanted for the test
 const TURN_ROOM_TIMEOUT := 8.0    # ... but do not wait forever
 
@@ -380,4 +384,25 @@ func verify(game) -> Array:
 		failures.append("frame rate too low: %.1f fps" % float(stats["fps"]))
 	if not stats["errors"].is_empty():
 		failures.append("errors reported: %s" % str(stats["errors"]))
+
+	var engine_errors := _engine_errors()
+	if not engine_errors.is_empty():
+		failures.append("engine errors logged: %s" % str(engine_errors.slice(0, 3)))
 	return failures
+
+
+## Distinct engine-level errors written to the log during this run.
+func _engine_errors() -> Array:
+	var found: Array = []
+	if not FileAccess.file_exists(LOG_PATH):
+		return found
+	var file := FileAccess.open(LOG_PATH, FileAccess.READ)
+	if file == null:
+		return found
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line.begins_with("ERROR:") or line.begins_with("SCRIPT ERROR"):
+			if not found.has(line):
+				found.append(line)
+	file.close()
+	return found

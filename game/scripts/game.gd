@@ -144,15 +144,7 @@ func play_time() -> float:
 
 
 func _refresh_item_slot() -> void:
-	if world.boost_time_left > 0.0:
-		_hud.set_item(
-			"SPEED BOOST  x%.1f   %.1fs" % [world.speed_multiplier, world.boost_time_left],
-			GameConfig.SPARK_COLOR
-		)
-	elif world.carried_item:
-		_hud.set_item("ITEM  SPEED BOOST   [SPACE]", GameConfig.BOOST_COLOR)
-	else:
-		_hud.set_item("ITEM  empty", GameConfig.DIM_COLOR)
+	_hud.set_item(world.carried_item, world.boost_time_left, GameConfig.BOOST_DURATION)
 
 
 func _use_item() -> void:
@@ -219,16 +211,7 @@ func _enter_menu() -> void:
 	_held_turns.clear()
 	_hud.set_bar_visible(false)
 	_camera.set_preview(true)
-	_hud.show_overlay(
-		"SNAKE 3D",
-		GameConfig.SNAKE_HEAD_COLOR,
-		"ENTER  play",
-		"best score  %d     games played  %d" % [
-			PlayerProfile.high_score(), PlayerProfile.games_played(),
-		],
-		"the snake never stops: hold LEFT or RIGHT to turn  (or A / D, Q / D)\n"
-		+ "P  pause      C  camera (follow, overview, chase)      V  flat view      ESC  quit"
-	)
+	_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played())
 
 
 func _start_game() -> void:
@@ -249,9 +232,7 @@ func _toggle_pause() -> void:
 	if state == State.PLAY:
 		_set_state(State.PAUSE)
 		_held_turns.clear()
-		_hud.show_overlay(
-			"PAUSED", GameConfig.TEXT_COLOR, "P  resume", "", "ESC  menu"
-		)
+		_hud.show_pause()
 	elif state == State.PAUSE:
 		_hud.hide_overlay()
 		_set_state(State.PLAY)
@@ -271,12 +252,11 @@ func _game_over(outcome: SnakeWorld.Outcome) -> void:
 
 	_set_state(State.GAMEOVER)
 	_held_turns.clear()
-	_hud.show_overlay(
-		"GAME OVER",
-		GameConfig.DANGER_COLOR,
+	_hud.show_game_over(
 		"you hit a wall" if outcome == SnakeWorld.Outcome.DEAD_WALL else "you bit yourself",
-		"NEW BEST!" if _last_record else "score %d     best %d" % [score, PlayerProfile.high_score()],
-		"R  retry     M  menu     ESC  quit"
+		score,
+		PlayerProfile.high_score(),
+		_last_record
 	)
 
 

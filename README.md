@@ -21,7 +21,8 @@ game/                      the Godot project (open this folder in Godot)
     board_view.gd          floor, ramparts, food and the snake mesh
     snake_mesh.gd          the body: procedural tube, gradient and lightning
     camera_rig.gd          follow / overview / chase cameras + flat top view
-    hud.gd                 score bar and centred overlay
+    hud.gd                 the interface, built in code
+    ui/item_slot.gd        the item slot: bolt, ring and countdown
     journal.gd             autoload: structured logging
     profile_store.gd       autoload: best score and preferences
     greedy_agent.gd        bot used by the self-test
@@ -54,6 +55,15 @@ and each bite makes the body longer.
 
 Because steering is relative, every camera is playable; chase is simply the
 most immersive.
+
+### Interface
+
+The interface is built in code from styled panels rather than bare labels:
+rounded pills for the score, the camera and the best score, a drawn item
+slot - a lightning bolt in a disc, with a ring that empties like a fuse
+while the boost burns - and a centred card for the menu, the pause and the
+game over screens. Each card leads with the one action worth taking, shown
+as a keycap and a verb, with the rest of the keys listed underneath.
 
 ### Look
 
@@ -143,7 +153,9 @@ Exit code `0` means every state was reached, all four views were rendered,
 both turns registered, the bolt was collected and fired, the speed reached
 x2 and came back to x1, the body stayed continuous and grew progressively,
 the bot scored, two games completed, the frame rate stayed above 25 fps and
-nothing was logged as an error.
+nothing - the game or the engine - wrote an error in the log. That last
+check reads the log file back: engine errors never reached the game code,
+and one of them once shipped unnoticed.
 
 Useful flags: `--seed N` (deterministic food), `--steps N` (safety budget).
 
