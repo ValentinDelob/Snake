@@ -1,27 +1,29 @@
 # Snake 3D
 
-A pygame Snake game rendered with a home-made software 3D engine, built as a
-standalone Windows executable.
+A Snake game built with **Godot 4.7**, exported as a standalone Windows
+executable. It started life as a pygame prototype, which is kept, working, in
+`legacy/python`.
 
 ## Layout
 
 ```
-snake.py            entry point (thin wrapper)
-snakegame/
-  config.py         constants, palette, paths
-  logging_setup.py  rotating file log + crash capture
-  geometry.py       grid points and directions
-  world.py          pure game rules (no pygame)
-  render3d.py       software 3D renderer (projection, clipping, shading)
-  render2d.py       classic flat renderer
-  engine.py         window, main loop, scene stack, run stats
-  scenes.py         menu / play / pause / game over screens
-  profile_store.py  persistent player profile (best score)
-  ui.py             drawing helpers
-  agents.py         automated players
-  selftest.py       scripted end-to-end driver
-  app.py            command line interface
-build.py            PyInstaller build script
+build.ps1                  export the game to dist\snake.exe
+game/                      the Godot project (open this folder in Godot)
+  project.godot            autoloads, renderer, file logging
+  export_presets.cfg       Windows Desktop preset (single embedded .exe)
+  scenes/main.tscn         world, sun, camera, board and HUD
+  scripts/
+    game.gd                state machine, input, fixed-step simulation
+    snake_world.gd         the rules, with no dependency on nodes
+    board_view.gd          floor, grid, ramparts, pooled snake meshes, food
+    camera_rig.gd          follow / overview / chase cameras + flat top view
+    hud.gd                 score bar and centred overlay
+    journal.gd             autoload: structured logging
+    profile_store.gd       autoload: best score and preferences
+    greedy_agent.gd        bot used by the self-test
+    selftest.gd            scripted end-to-end driver
+    game_config.gd         shared constants and palette
+legacy/python/             the original pygame implementation
 ```
 
 ## Controls
@@ -34,60 +36,80 @@ build.py            PyInstaller build script
 | R | retry after a game over |
 | M | back to the menu |
 | C | cycle camera: follow, overview, chase |
-| V | switch between the 3D and the flat 2D view |
-| Esc | quit (or leave the current screen) |
+| V | flat top-down view (the classic look) |
+| Esc | quit, or leave the current screen |
 
-## The 3D view
-
-The board is drawn by `render3d.py`, a small software rasteriser: no OpenGL,
-no GPU driver needed, so the executable starts anywhere. It projects the grid
-with a perspective camera, clips geometry against the near plane and the
-viewport, sorts faces back to front and shades them with a directional light.
-
-Three cameras, cycled with `C`:
+## Cameras
 
 * **follow** - a 3/4 view trailing the head, board orientation fixed
 * **overview** - the whole board at once
 * **chase** - right behind the head; the board turns with you, so steering
-  becomes relative: left and right turn, there is no absolute direction
+  becomes relative: left and right turn the snake
+* **flat** (`V`) - orthographic top-down, like the original 2D game
 
-`V` switches back to the original flat view at any time. Both preferences are
-remembered in `savegame.json`.
+The view and the camera are remembered between sessions.
 
-## Run from sources
-
-```
-py -m pip install -r requirements.txt
-py snake.py
-```
-
-## Build the executable
+## Build
 
 ```
-py build.py          # -> dist/snake.exe
+.\build.ps1              # release  -> dist\snake.exe (single file, ~104 MiB)
+.\build.ps1 -Debug       # debug build, keeps a console
+```
+
+The script finds Godot in `%LOCALAPPDATA%\Programs\Godot`, honours the
+`GODOT` environment variable, imports the resources, then exports the
+`Windows Desktop` preset. It needs the matching **export templates**
+installed (`%APPDATA%\Godot\export_templates\<version>`).
+
+## Run from the editor
+
+```
+game\  ->  open in Godot 4.7, then F5
 ```
 
 ## Self-test
 
-The executable can drive itself through every screen, which is how each build
-is validated:
+The executable can drive itself through every screen and every camera, which
+is how each build is validated:
 
 ```
 dist\snake.exe --selftest
 ```
 
-A bot plays a real game while a scripted driver presses the keys: menu ->
-play -> every camera -> both renderers -> pause -> resume -> game over ->
-retry -> quit. Exit code `0` means every screen was reached, all three
-cameras and both views were rendered, the bot scored, two games completed,
-the frame rate stayed above 25 fps and no error was logged. The self-test uses its own profile file so the player's best
-score is left untouched.
+A bot plays while a scripted driver injects real key events: menu -> play ->
+every camera -> flat view -> pause -> resume -> game over -> retry -> quit.
+Exit code `0` means every state was reached, all four views were rendered,
+the bot scored, two games completed, the frame rate stayed above 25 fps and
+nothing was logged as an error.
 
-## Files produced at runtime
+Useful flags: `--seed N` (deterministic food), `--steps N` (safety budget).
 
-* `logs/snake.log` - rotating log (512 KiB x 4): environment banner, scene
-  transitions, deaths, scores, uncaught exceptions.
-* `savegame.json` - best score and number of games played.
+`--demo` is the quiet cousin: the bot plays a normal game while you keep the
+keyboard for the cameras, which is handy to look at the views or to leave the
+game running on a screen.
 
-Both sit next to the executable (or in the project root when run from
-sources).
+## Logs
+
+Godot's file logging is enabled in `project.godot`, so every run - engine
+messages included - is written to:
+
+```
+%APPDATA%\Godot\app_userdata\Snake 3D\logs\snake.log
+```
+
+The previous four runs are kept beside it. The same folder holds
+`savegame.json` with the best score, the games played and the view
+preferences.
+
+## The pygame original
+
+`legacy/python` still builds and runs on its own:
+
+```
+cd legacy\python
+py -m pip install -r requirements.txt
+py snake.py            # play
+py build.py            # -> legacy\python\dist\snake.exe
+```
+
+It contains its own software 3D renderer, written before the move to Godot.

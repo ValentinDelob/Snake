@@ -1,0 +1,106 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/game.gd" id="1_game"]
+[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="2_camera"]
+[ext_resource type="Script" path="res://scripts/board_view.gd" id="3_board"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 1
+background_color = Color(0.035, 0.047, 0.078, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.45, 0.52, 0.62, 1)
+ambient_light_energy = 0.55
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_game")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="Camera" type="Camera3D" parent="."]
+script = ExtResource("2_camera")
+
+[node name="Board" type="Node3D" parent="."]
+script = ExtResource("3_board")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("4_hud")
+
+[node name="Score" type="Label" parent="HUD"]
+offset_left = 20.0
+offset_top = 14.0
+offset_right = 320.0
+offset_bottom = 50.0
+theme_override_font_sizes/font_size = 26
+text = "SCORE 0"
+
+[node name="Mode" type="Label" parent="HUD"]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -160.0
+offset_top = 20.0
+offset_right = 160.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 16
+text = "3D follow"
+horizontal_alignment = 1
+
+[node name="Best" type="Label" parent="HUD"]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -240.0
+offset_top = 18.0
+offset_right = -20.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 18
+text = "BEST 0"
+horizontal_alignment = 2
+
+[node name="Overlay" type="Control" parent="HUD"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="Shade" type="ColorRect" parent="HUD/Overlay"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Box" type="VBoxContainer" parent="HUD/Overlay"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -380.0
+offset_top = -140.0
+offset_right = 380.0
+offset_bottom = 140.0
+mouse_filter = 2
+alignment = 1
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="HUD/Overlay/Box"]
+theme_override_font_sizes/font_size = 54
+text = "SNAKE 3D"
+horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="HUD/Overlay/Box"]
+theme_override_font_sizes/font_size = 22
+text = "ENTER  play"
+horizontal_alignment = 1
+
+[node name="Extra" type="Label" parent="HUD/Overlay/Box"]
+theme_override_font_sizes/font_size = 18
+text = ""
+horizontal_alignment = 1
+
+[node name="Hint" type="Label" parent="HUD/Overlay/Box"]
+theme_override_font_sizes/font_size = 16
+text = ""
+horizontal_alignment = 1

@@ -1,12 +1,25 @@
-# Python
+# Build output
+dist/
+build/
+
+# Godot
+game/.godot/
+game/android/
+*.translation
+
+# Python (legacy implementation)
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
 env/
+*.spec
+logs/
+savegame.json
+selftest_profile.json
 
-# Outils
+# Tools
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -16,11 +29,3 @@ env/
 Thumbs.db
 .idea/
 .vscode/
-
-# Build
-build/
-dist/
-*.spec
-logs/
-savegame.json
-selftest_profile.json
