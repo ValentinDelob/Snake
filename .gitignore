@@ -16,3 +16,9 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+
+# Build
+build/
+dist/
+*.spec
+logs/
