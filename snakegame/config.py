@@ -15,23 +15,38 @@ from pathlib import Path
 CELL_SIZE = 20
 GRID_WIDTH = 28
 GRID_HEIGHT = 18
-WINDOW_SIZE = (GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE)
+
+HUD_HEIGHT = 44
+BOARD_SIZE = (GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE)
+BOARD_ORIGIN = (0, HUD_HEIGHT)
+WINDOW_SIZE = (BOARD_SIZE[0], BOARD_SIZE[1] + HUD_HEIGHT)
 
 # --------------------------------------------------------------------------- #
 # Timing
 # --------------------------------------------------------------------------- #
-FPS = 10
+UI_FPS = 60          # rendering / input rate
+STEP_HZ = 10.0       # how many times per second the snake advances
 
 # --------------------------------------------------------------------------- #
 # Palette
 # --------------------------------------------------------------------------- #
-BG_COLOR = (0, 0, 0)
-SNAKE_COLOR = (0, 255, 0)
-FOOD_COLOR = (255, 0, 0)
-TEXT_COLOR = (255, 255, 255)
+BG_COLOR = (8, 10, 14)
+BOARD_COLOR = (14, 18, 24)
+GRID_COLOR = (22, 28, 36)
+HUD_COLOR = (18, 22, 30)
+SNAKE_HEAD_COLOR = (120, 255, 150)
+SNAKE_BODY_COLOR = (0, 200, 90)
+SNAKE_TAIL_COLOR = (0, 120, 60)
+FOOD_COLOR = (255, 70, 70)
+TEXT_COLOR = (236, 240, 244)
+TEXT_DIM_COLOR = (130, 142, 158)
+ACCENT_COLOR = (255, 208, 80)
+OVERLAY_COLOR = (0, 0, 0, 170)
 
-FONT_NAME = "monospace"
-FONT_SIZE = 24
+FONT_NAME = "consolas,monospace"
+FONT_SIZE_SMALL = 16
+FONT_SIZE = 22
+FONT_SIZE_BIG = 40
 
 WINDOW_TITLE = "Snake"
 
@@ -43,8 +58,8 @@ def app_dir() -> Path:
     """Directory the application runs from.
 
     For a PyInstaller build this is the folder holding the ``.exe`` so that
-    logs sit next to the binary; when running from sources it is the project
-    root.
+    logs and saves sit next to the binary; when running from sources it is
+    the project root.
     """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -53,3 +68,4 @@ def app_dir() -> Path:
 
 LOG_DIR = app_dir() / "logs"
 LOG_FILE = LOG_DIR / "snake.log"
+SAVE_FILE = app_dir() / "savegame.json"

@@ -10,9 +10,9 @@ from __future__ import annotations
 from collections import deque
 from typing import Optional
 
-from . import config
 from .geometry import DIRECTIONS, Point
 from .logging_setup import get_logger
+from .world import SnakeWorld
 
 log = get_logger("agent")
 
@@ -25,30 +25,31 @@ class GreedyAgent:
     enough for a self-test to be meaningful.
     """
 
-    def decide(self, game) -> Optional[Point]:
-        head = game.head
+    def decide(self, world: SnakeWorld) -> Optional[Point]:
+        head = world.head
         options = []
         for direction in DIRECTIONS:
-            if direction.is_opposite(game.direction):
+            if direction.is_opposite(world.direction):
                 continue
             target = head + direction
-            if game.is_lethal(target):
+            if world.is_lethal(target):
                 continue
-            distance = abs(target.x - game.food.x) + abs(target.y - game.food.y)
-            room = self._reachable_area(game, target)
-            options.append((-room, distance, direction))
+            distance = abs(target.x - world.food.x) + abs(target.y - world.food.y)
+            room = self._reachable_area(world, target)
+            options.append((room, distance, direction))
 
         if not options:
             log.debug("No safe move from (%s,%s)", head.x, head.y)
             return None
 
-        options.sort(key=lambda item: (item[0] // 8, item[1]))
+        # Coarse room buckets first: escape dead ends, otherwise chase food.
+        options.sort(key=lambda item: (-(item[0] // 8), item[1]))
         return options[0][2]
 
     @staticmethod
-    def _reachable_area(game, start: Point, limit: int = 120) -> int:
+    def _reachable_area(world: SnakeWorld, start: Point, limit: int = 120) -> int:
         """Flood fill the free space reachable from a cell (capped)."""
-        blocked = set(game.snake[:-1])
+        blocked = set(world.snake[:-1])
         seen = {start}
         queue = deque([start])
         count = 0
@@ -57,9 +58,7 @@ class GreedyAgent:
             count += 1
             for direction in DIRECTIONS:
                 nxt = cell + direction
-                if nxt in seen or nxt in blocked:
-                    continue
-                if not (0 <= nxt.x < config.GRID_WIDTH and 0 <= nxt.y < config.GRID_HEIGHT):
+                if nxt in seen or nxt in blocked or not world.is_inside(nxt):
                     continue
                 seen.add(nxt)
                 queue.append(nxt)

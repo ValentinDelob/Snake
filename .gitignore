@@ -22,3 +22,5 @@ build/
 dist/
 *.spec
 logs/
+savegame.json
+selftest_profile.json
