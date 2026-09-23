@@ -12,6 +12,9 @@ game/                      the Godot project (open this folder in Godot)
   project.godot            autoloads, renderer, file logging
   export_presets.cfg       Windows Desktop preset (single embedded .exe)
   scenes/main.tscn         world, sun, camera, board and HUD
+  shaders/
+    snake_body.gdshader    skin: gradient, belly, scales, rim, boost bolts
+    arena_floor.gdshader   floor: anti-aliased grid, vignette, light pool
   scripts/
     game.gd                state machine, input, fixed-step simulation
     snake_world.gd         continuous rules: position, heading, trailing path
@@ -51,6 +54,28 @@ and each bite makes the body longer.
 
 Because steering is relative, every camera is playable; chase is simply the
 most immersive.
+
+### Look
+
+The arena is lit rather than flat-coloured: a warm directional sun casting
+shadows, a dim ambient fill, ACES tone mapping and a touch of bloom on the
+bright things (the bolt, the boost, the title).
+
+Two shaders do the rest:
+
+* `snake_body.gdshader` paints the skin from the mesh UVs - length along the
+  body drives the head-to-tail gradient, angle around it draws a paler belly
+  and faint diamond scales. A rim light keeps the silhouette readable against
+  the dark floor, the head glows a little (more right after a bite), and the
+  boost sends bolts of light running down the whole body.
+* `arena_floor.gdshader` draws the grid with screen-space derivatives, so it
+  stays crisp near the camera and fades in the distance instead of
+  shimmering, darkens towards the walls, and lights a pool of ground under
+  the snake while it is boosted.
+
+Two small lights ride the props: one on the head, barely there normally and
+electric while the boost burns, and one on the bolt, throbbing so it catches
+the eye across a dark arena.
 
 ### Items
 

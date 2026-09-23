@@ -5,21 +5,20 @@ extends MeshInstance3D
 ##
 ## A ring of vertices is swept along the path the head travelled, from a
 ## rounded nose to a pointed tail. Thickness follows a profile (bulging at
-## the head, tapering at the tail) and the colour gradient is carried by
-## vertex colours, so the whole snake is a single surface: no repeated
-## spheres, no visible joints.
+## the head, tapering at the tail) and the surface carries UVs - length along
+## the body and angle around it - which is all snake_body.gdshader needs to
+## paint the gradient, the belly, the scales and the boost lightning.
 
 const NOSE_RINGS := 4
-## Electric bands running along the body while the boost is on.
-const SPARK_BANDS := 7.0
-const SPARK_SPEED := 2.4
+
+const SHADER_PATH := "res://shaders/snake_body.gdshader"
 
 var _mesh := ArrayMesh.new()
-var _material := StandardMaterial3D.new()
+var _material := ShaderMaterial.new()
 
 var _vertices := PackedVector3Array()
 var _normals := PackedVector3Array()
-var _colors := PackedColorArray()
+var _uvs := PackedVector2Array()
 var _indices := PackedInt32Array()
 var _ring_count := 0
 ## cos/sin of the ring angles, computed once.
@@ -29,11 +28,12 @@ var _ring_sin := PackedFloat32Array()
 
 func _ready() -> void:
 	mesh = _mesh
-	_material.vertex_color_use_as_albedo = true
-	_material.roughness = 0.55
-	_material.emission_enabled = true
-	_material.emission = GameConfig.SNAKE_BODY_COLOR
-	_material.emission_energy_multiplier = 0.08
+	_material.shader = load(SHADER_PATH)
+	_material.set_shader_parameter("head_color", GameConfig.SNAKE_HEAD_COLOR)
+	_material.set_shader_parameter("body_color", GameConfig.SNAKE_BODY_COLOR)
+	_material.set_shader_parameter("tail_color", GameConfig.SNAKE_TAIL_COLOR)
+	_material.set_shader_parameter("boost_color", GameConfig.BOOST_COLOR)
+	_material.set_shader_parameter("spark_color", GameConfig.SPARK_COLOR)
 	material_override = _material
 
 	var radial := GameConfig.TUBE_RADIAL_SEGMENTS
@@ -45,19 +45,14 @@ func _ready() -> void:
 		_ring_sin[index] = sin(angle)
 
 
-var _boost := 0.0
-var _boost_phase := 0.0
-
-
-## Flash the head white for a moment after a bite.
+## Flash the head for a moment after a bite.
 func set_flash(flash: float) -> void:
-	_material.emission_energy_multiplier = 0.08 + flash * 0.5 + _boost * 0.85
+	_material.set_shader_parameter("flash", clampf(flash, 0.0, 1.0))
 
 
 ## How strongly the lightning shows along the body, 0 to 1.
-func set_boost(intensity: float, phase: float) -> void:
-	_boost = clampf(intensity, 0.0, 1.0)
-	_boost_phase = phase
+func set_boost(intensity: float, _phase: float) -> void:
+	_material.set_shader_parameter("boost", clampf(intensity, 0.0, 1.0))
 
 
 func rebuild(world: SnakeWorld, height: float) -> void:
@@ -115,26 +110,6 @@ func _radius_at(travelled: float, along: float) -> float:
 	return maxf(radius, 0.0)
 
 
-func _shade_color(along: float) -> Color:
-	var base: Color
-	if along < 0.15:
-		base = GameConfig.SNAKE_HEAD_COLOR.lerp(GameConfig.SNAKE_BODY_COLOR, along / 0.15)
-	else:
-		# The darkening starts early so the gradient reads over the whole body
-		# instead of being crushed into the thin tail.
-		var mix: float = pow((along - 0.15) / 0.85, 0.65)
-		base = GameConfig.SNAKE_BODY_COLOR.lerp(GameConfig.SNAKE_TAIL_COLOR, mix)
-
-	if _boost <= 0.0:
-		return base
-
-	# Sharp bands of light running from the head to the tail.
-	var wave := sin((along * SPARK_BANDS - _boost_phase * SPARK_SPEED) * TAU)
-	var spark: float = pow(maxf(wave, 0.0), 5.0) * _boost
-	var electric := GameConfig.BOOST_COLOR.lerp(GameConfig.SPARK_COLOR, spark)
-	return base.lerp(electric, clampf(spark * 0.9 + _boost * 0.15, 0.0, 1.0))
-
-
 func _build_surface(
 	points: Array[Vector3], radii: PackedFloat32Array, shades: PackedFloat32Array
 ) -> void:
@@ -147,7 +122,7 @@ func _build_surface(
 	if _vertices.size() != vertex_count:
 		_vertices.resize(vertex_count)
 		_normals.resize(vertex_count)
-		_colors.resize(vertex_count)
+		_uvs.resize(vertex_count)
 	if _ring_count != rings:
 		_ring_count = rings
 		_rebuild_indices(rings, radial)
@@ -161,20 +136,20 @@ func _build_surface(
 		side = side.normalized()
 		var up := side.cross(tangent).normalized()
 		var radius: float = radii[ring]
-		var color := _shade_color(shades[ring])
+		var along: float = shades[ring]
 
 		for index in range(radial):
 			var offset: Vector3 = side * _ring_cos[index] + up * _ring_sin[index]
 			var vertex_index := ring * radial + index
 			_vertices[vertex_index] = centre + offset * radius
 			_normals[vertex_index] = offset
-			_colors[vertex_index] = color
+			_uvs[vertex_index] = Vector2(along, float(index) / float(radial))
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = _vertices
 	arrays[Mesh.ARRAY_NORMAL] = _normals
-	arrays[Mesh.ARRAY_COLOR] = _colors
+	arrays[Mesh.ARRAY_TEX_UV] = _uvs
 	arrays[Mesh.ARRAY_INDEX] = _indices
 
 	_mesh.clear_surfaces()

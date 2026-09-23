@@ -7,6 +7,7 @@ extends Node3D
 ## tube rebuilt every frame by SnakeMesh, so the body is continuous rather
 ## than a string of separate meshes.
 
+const FLOOR_SHADER := "res://shaders/arena_floor.gdshader"
 const FLASH_DURATION := 0.45
 const WALL_HEIGHT := 0.8
 const WALL_THICKNESS := 0.4
@@ -15,7 +16,10 @@ const BODY_HEIGHT := 0.4
 var _eyes: Array[MeshInstance3D] = []
 var _body: SnakeMesh
 var _food: MeshInstance3D
+var _floor_material: ShaderMaterial
+var _head_lamp: OmniLight3D
 var _bolt: MeshInstance3D
+var _bolt_lamp: OmniLight3D
 var _flash_ring: MeshInstance3D
 var _flash_material: StandardMaterial3D
 var _flash_time := -1.0
@@ -38,6 +42,7 @@ func refresh(world: SnakeWorld, elapsed: float, flash: float) -> void:
 	_body.set_boost(world.boost_intensity(), elapsed)
 	_body.set_flash(flash)
 	_place_eyes(world)
+	_refresh_lighting(world)
 	_refresh_bolt(world, elapsed)
 	_refresh_flash(elapsed)
 
@@ -49,9 +54,24 @@ func refresh(world: SnakeWorld, elapsed: float, flash: float) -> void:
 	_food.rotation.y = elapsed * 1.6
 
 
+## Feed the floor shader and the head lamp: both react to the boost.
+func _refresh_lighting(world: SnakeWorld) -> void:
+	var boost := world.boost_intensity()
+	_floor_material.set_shader_parameter("head_position", world.head_position)
+	_floor_material.set_shader_parameter("head_glow", boost)
+
+	var ahead := world.direction() * 0.6
+	_head_lamp.position = Vector3(
+		world.head_position.x + ahead.x, 1.7, world.head_position.y + ahead.y
+	)
+	_head_lamp.light_color = GameConfig.SNAKE_HEAD_COLOR.lerp(GameConfig.SPARK_COLOR, boost)
+	_head_lamp.light_energy = 0.15 + boost * 1.7
+
+
 ## A bolt waiting on the arena: floating, spinning, hard to miss.
 func _refresh_bolt(world: SnakeWorld, elapsed: float) -> void:
 	_bolt.visible = world.pickup_on_arena
+	_bolt_lamp.visible = world.pickup_on_arena
 	if not world.pickup_on_arena:
 		return
 	_bolt.position = Vector3(
@@ -60,6 +80,9 @@ func _refresh_bolt(world: SnakeWorld, elapsed: float) -> void:
 		world.pickup.y
 	)
 	_bolt.rotation.y = elapsed * 1.4
+	_bolt_lamp.position = _bolt.position
+	# A slow throb, so the bolt catches the eye across a dark arena.
+	_bolt_lamp.light_energy = 0.9 + 0.35 * sin(elapsed * 3.0)
 
 
 ## Small, quick ring when the bolt is collected.
@@ -95,53 +118,30 @@ func _refresh_flash(elapsed: float) -> void:
 func _build_floor(world: SnakeWorld) -> void:
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(world.width, world.height)
-	var material := StandardMaterial3D.new()
-	material.albedo_color = GameConfig.FLOOR_COLOR
-	material.roughness = 0.95
+	# The grid is drawn by the shader, but it needs vertices to interpolate
+	# the world position across.
+	plane.subdivide_width = 8
+	plane.subdivide_depth = 8
+
+	_floor_material = ShaderMaterial.new()
+	_floor_material.shader = load(FLOOR_SHADER)
+	_floor_material.set_shader_parameter("base_color", GameConfig.FLOOR_COLOR)
+	_floor_material.set_shader_parameter("line_color", GameConfig.GRID_COLOR)
+	_floor_material.set_shader_parameter("glow_color", GameConfig.BOOST_COLOR)
+	_floor_material.set_shader_parameter("arena_size", Vector2(world.width, world.height))
 
 	var instance := MeshInstance3D.new()
 	instance.name = "Floor"
 	instance.mesh = plane
-	instance.material_override = material
+	instance.material_override = _floor_material
 	instance.position = Vector3(world.width * 0.5, 0.0, world.height * 0.5)
-	add_child(instance)
-
-	_build_floor_marks(world)
-
-
-func _build_floor_marks(world: SnakeWorld) -> void:
-	## The arena has no grid any more, but a bare floor gives no sense of
-	## speed in the chase view, so a faint ruling is kept as a ground
-	## reference.
-	var material := StandardMaterial3D.new()
-	material.albedo_color = GameConfig.GRID_COLOR
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-
-	var mesh := ImmediateMesh.new()
-	mesh.surface_begin(Mesh.PRIMITIVE_LINES, material)
-	var spacing := 2.0
-	var x := spacing
-	while x < world.width:
-		mesh.surface_add_vertex(Vector3(x, 0.01, 0.0))
-		mesh.surface_add_vertex(Vector3(x, 0.01, world.height))
-		x += spacing
-	var z := spacing
-	while z < world.height:
-		mesh.surface_add_vertex(Vector3(0.0, 0.01, z))
-		mesh.surface_add_vertex(Vector3(world.width, 0.01, z))
-		z += spacing
-	mesh.surface_end()
-
-	var instance := MeshInstance3D.new()
-	instance.name = "FloorMarks"
-	instance.mesh = mesh
 	add_child(instance)
 
 
 func _build_walls(world: SnakeWorld) -> void:
 	var material := StandardMaterial3D.new()
-	material.albedo_color = GameConfig.WALL_COLOR
-	material.roughness = 0.8
+	material.albedo_color = GameConfig.WALL_COLOR.darkened(0.2)
+	material.roughness = 0.65
 
 	var half := WALL_THICKNESS / 2.0
 	var walls := [
@@ -189,16 +189,25 @@ func _build_actors() -> void:
 	var food_mesh := BoxMesh.new()
 	food_mesh.size = Vector3.ONE * (GameConfig.FOOD_RADIUS * 1.5)
 	var food_material := StandardMaterial3D.new()
-	food_material.albedo_color = GameConfig.FOOD_COLOR
+	food_material.albedo_color = GameConfig.FOOD_COLOR.darkened(0.15)
+	food_material.roughness = 0.35
 	food_material.emission_enabled = true
 	food_material.emission = GameConfig.FOOD_COLOR
-	food_material.emission_energy_multiplier = 0.55
+	food_material.emission_energy_multiplier = 0.22
 
 	_food = MeshInstance3D.new()
 	_food.name = "Food"
 	_food.mesh = food_mesh
 	_food.material_override = food_material
 	add_child(_food)
+
+	# A light riding the head: barely there normally, electric while boosted.
+	_head_lamp = OmniLight3D.new()
+	_head_lamp.name = "HeadLamp"
+	_head_lamp.omni_range = 7.0
+	_head_lamp.light_energy = 0.0
+	_head_lamp.shadow_enabled = false
+	add_child(_head_lamp)
 
 	var bolt_material := StandardMaterial3D.new()
 	bolt_material.albedo_color = GameConfig.BOOST_COLOR
@@ -212,6 +221,15 @@ func _build_actors() -> void:
 	_bolt.material_override = bolt_material
 	_bolt.visible = false
 	add_child(_bolt)
+
+	_bolt_lamp = OmniLight3D.new()
+	_bolt_lamp.name = "BoltLamp"
+	_bolt_lamp.light_color = GameConfig.BOOST_COLOR
+	_bolt_lamp.light_energy = 1.1
+	_bolt_lamp.omni_range = 5.0
+	_bolt_lamp.shadow_enabled = false
+	_bolt_lamp.visible = false
+	add_child(_bolt_lamp)
 
 	var ring := TorusMesh.new()
 	ring.inner_radius = 0.34
