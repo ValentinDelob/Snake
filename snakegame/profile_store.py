@@ -15,7 +15,12 @@ from .logging_setup import get_logger
 
 log = get_logger("profile")
 
-_DEFAULTS: dict[str, Any] = {"high_score": 0, "games_played": 0}
+_DEFAULTS: dict[str, Any] = {
+    "high_score": 0,
+    "games_played": 0,
+    "view": config.DEFAULT_VIEW,
+    "camera": "follow",
+}
 
 
 class Profile:
@@ -33,6 +38,18 @@ class Profile:
     @property
     def games_played(self) -> int:
         return int(self.data["games_played"])
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.data.get(key, default)
+
+    def set_preference(self, key: str, value: Any) -> None:
+        """Store a display preference so the next session starts the same way."""
+        if key not in _DEFAULTS:
+            raise KeyError(key)
+        if self.data.get(key) != value:
+            self.data[key] = value
+            log.info("Preference %s = %s", key, value)
+            self.save()
 
     def record_game(self, score: int) -> bool:
         """Register a finished game. Returns True on a new record."""
@@ -52,7 +69,9 @@ class Profile:
             log.info("No profile yet, starting fresh (%s)", path)
             return cls(path=path)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            # utf-8-sig: the file may have been edited by hand with an editor
+            # that prepends a BOM, which plain utf-8 would reject.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             profile = cls(data, path=path)
             log.info(
                 "Profile loaded: high_score=%s games=%s", profile.high_score, profile.games_played

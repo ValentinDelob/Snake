@@ -25,3 +25,13 @@ LEFT = Point(-1, 0)
 RIGHT = Point(1, 0)
 
 DIRECTIONS = (UP, DOWN, LEFT, RIGHT)
+
+
+def turn_right(direction: Point) -> Point:
+    """Quarter turn clockwise seen from above (the snake's own right)."""
+    return Point(-direction.y, direction.x)
+
+
+def turn_left(direction: Point) -> Point:
+    """Quarter turn counter-clockwise seen from above."""
+    return Point(direction.y, -direction.x)

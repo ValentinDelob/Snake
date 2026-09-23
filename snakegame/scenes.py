@@ -8,8 +8,10 @@ import pygame
 
 from . import config, ui
 from .engine import Engine, Scene
-from .geometry import DOWN, LEFT, RIGHT, UP
+from .geometry import DOWN, LEFT, RIGHT, UP, turn_left, turn_right
 from .logging_setup import get_logger
+from .render2d import Board2DRenderer
+from .render3d import Board3DRenderer, CameraMode
 from .world import SnakeWorld, StepOutcome
 
 log = get_logger("scenes")
@@ -27,7 +29,30 @@ _KEY_TO_DIRECTION = {
     pygame.K_d: RIGHT,
 }
 
+#: in the chase view the board has no fixed orientation, so steering is relative
+_KEY_TO_TURN = {
+    pygame.K_LEFT: turn_left,
+    pygame.K_a: turn_left,
+    pygame.K_q: turn_left,
+    pygame.K_RIGHT: turn_right,
+    pygame.K_d: turn_right,
+}
+
 _PAUSE_KEYS = (pygame.K_p, pygame.K_SPACE)
+_VIEW_KEY = pygame.K_v
+_CAMERA_KEY = pygame.K_c
+
+
+def make_renderer(view: str, camera: str):
+    """Build the renderer described by the stored preferences."""
+    if view == "2d":
+        return Board2DRenderer()
+    try:
+        mode = CameraMode(camera)
+    except ValueError:
+        log.warning("Unknown camera mode %r, falling back to follow", camera)
+        mode = CameraMode.FOLLOW
+    return Board3DRenderer(mode)
 
 
 # --------------------------------------------------------------------------- #
@@ -46,33 +71,46 @@ class MenuScene(Scene):
         surface.fill(config.BG_COLOR)
         width, height = config.WINDOW_SIZE
         fonts = self.engine.fonts
+        profile = self.engine.profile
 
         pulse = 0.5 + 0.5 * math.sin(self.engine.elapsed * 3.0)
         title_color = ui.lerp_color(config.SNAKE_BODY_COLOR, config.SNAKE_HEAD_COLOR, pulse)
 
-        ui.draw_text(surface, fonts["big"], "SNAKE", title_color, center=(width // 2, height // 3))
+        ui.draw_text(surface, fonts["big"], "SNAKE 3D", title_color, center=(width // 2, height // 3 - 8))
         ui.draw_text(
             surface,
             fonts["normal"],
             "ENTER  play",
             config.TEXT_COLOR,
-            center=(width // 2, height // 2 + 10),
+            center=(width // 2, height // 2 + 4),
         )
         ui.draw_text(
             surface,
             fonts["small"],
             "arrows / WASD / ZQSD  move     P  pause     ESC  quit",
             config.TEXT_DIM_COLOR,
-            center=(width // 2, height // 2 + 44),
+            center=(width // 2, height // 2 + 36),
         )
         ui.draw_text(
             surface,
             fonts["small"],
-            "best score  {}     games played  {}".format(
-                self.engine.profile.high_score, self.engine.profile.games_played
-            ),
+            "C  camera (follow / overview / chase)     V  2D-3D view",
+            config.TEXT_DIM_COLOR,
+            center=(width // 2, height // 2 + 58),
+        )
+        ui.draw_text(
+            surface,
+            fonts["small"],
+            "view  {}  {}".format(profile.get("view", "3d").upper(), profile.get("camera", "follow")),
+            config.TEXT_DIM_COLOR,
+            center=(width // 2, height - 62),
+        )
+        ui.draw_text(
+            surface,
+            fonts["small"],
+            "best score  {}     games played  {}".format(profile.high_score, profile.games_played),
             config.ACCENT_COLOR,
-            center=(width // 2, height - 40),
+            center=(width // 2, height - 36),
         )
 
 
@@ -86,12 +124,35 @@ class PlayScene(Scene):
         self.step_interval = 1.0 / config.STEP_HZ
         self._accumulator = 0.0
         self._flash = 0.0  # fades out after each bite
+        self.renderer = make_renderer(
+            engine.profile.get("view", config.DEFAULT_VIEW),
+            engine.profile.get("camera", "follow"),
+        )
+        log.info("Renderer: %s (%s)", self.renderer.name, self._camera_label())
 
     # ------------------------------------------------------------------ #
+    @property
+    def view_name(self) -> str:
+        return self.renderer.name
+
+    @property
+    def camera_name(self) -> str:
+        return self._camera_label()
+
+    def _camera_label(self) -> str:
+        mode = getattr(self.renderer, "mode", None)
+        return mode.value if mode is not None else "flat"
+
+    @property
+    def _relative_steering(self) -> bool:
+        mode = getattr(self.renderer, "mode", None)
+        return mode is not None and mode.uses_relative_steering
+
     def restart(self) -> None:
         self.world.reset()
         self._accumulator = 0.0
         self._flash = 0.0
+        self.renderer.reset_camera()
         log.info("Round restarted")
 
     # ------------------------------------------------------------------ #
@@ -102,17 +163,53 @@ class PlayScene(Scene):
             self.engine.replace(MenuScene(self.engine))
         elif event.key in _PAUSE_KEYS:
             self.engine.push(PauseScene(self.engine))
-        elif event.key in _KEY_TO_DIRECTION:
-            direction = _KEY_TO_DIRECTION[event.key]
-            self.world.steer(direction)
-            log.debug("Steer key %s -> (%s,%s)", pygame.key.name(event.key), direction.x, direction.y)
+        elif event.key == _VIEW_KEY:
+            self._toggle_view()
+        elif event.key == _CAMERA_KEY:
+            self._cycle_camera()
+        else:
+            self._steer(event.key)
 
+    def _steer(self, key: int) -> None:
+        if self._relative_steering:
+            turn = _KEY_TO_TURN.get(key)
+            if turn is None:
+                return
+            direction = turn(self.world.direction)
+            self.world.steer(direction)
+            log.debug("Relative turn -> (%s,%s)", direction.x, direction.y)
+            return
+
+        direction = _KEY_TO_DIRECTION.get(key)
+        if direction is None:
+            return
+        self.world.steer(direction)
+        log.debug("Steer key %s -> (%s,%s)", pygame.key.name(key), direction.x, direction.y)
+
+    def _toggle_view(self) -> None:
+        view = "2d" if self.renderer.name == "3d" else "3d"
+        camera = self._camera_label() if self.renderer.name == "3d" else self.engine.profile.get("camera", "follow")
+        self.renderer = make_renderer(view, camera)
+        self.engine.profile.set_preference("view", view)
+        log.info("View switched to %s (%s)", self.renderer.name, self._camera_label())
+
+    def _cycle_camera(self) -> None:
+        if self.renderer.name != "3d":
+            log.info("Camera modes only apply to the 3D view")
+            return
+        mode = self.renderer.mode.next()
+        self.renderer.set_mode(mode)
+        self.engine.profile.set_preference("camera", mode.value)
+        log.info("Camera mode: %s (steering=%s)", mode.value, "relative" if mode.uses_relative_steering else "absolute")
+
+    # ------------------------------------------------------------------ #
     def update(self, dt: float) -> None:
         self._flash = max(0.0, self._flash - dt * 3.0)
         self._accumulator += dt
         while self._accumulator >= self.step_interval and self.world.alive:
             self._accumulator -= self.step_interval
             self._advance()
+        self.renderer.update(dt, self.world)
 
     def _advance(self) -> None:
         engine = self.engine
@@ -162,10 +259,8 @@ class PlayScene(Scene):
 
     # ------------------------------------------------------------------ #
     def draw(self, surface: pygame.Surface) -> None:
+        self.renderer.draw(surface, self.world, self.engine.elapsed, self._flash)
         self._draw_hud(surface)
-        self._draw_board(surface)
-        self._draw_food(surface)
-        self._draw_snake(surface)
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
         fonts = self.engine.fonts
@@ -186,51 +281,17 @@ class PlayScene(Scene):
         ui.draw_text(
             surface,
             fonts["small"],
+            "{} {}".format(self.renderer.name.upper(), self._camera_label()),
+            config.TEXT_DIM_COLOR,
+            center=(config.WINDOW_SIZE[0] // 2, config.HUD_HEIGHT // 2),
+        )
+        ui.draw_text(
+            surface,
+            fonts["small"],
             "BEST {}".format(max(self.engine.profile.high_score, self.world.score)),
             config.ACCENT_COLOR,
             midright=(config.WINDOW_SIZE[0] - 12, config.HUD_HEIGHT // 2),
         )
-
-    def _draw_board(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, config.BOARD_COLOR, ui.board_rect())
-        origin_x, origin_y = config.BOARD_ORIGIN
-        for x in range(config.GRID_WIDTH + 1):
-            px = origin_x + x * config.CELL_SIZE
-            pygame.draw.line(surface, config.GRID_COLOR, (px, origin_y), (px, config.WINDOW_SIZE[1]))
-        for y in range(config.GRID_HEIGHT + 1):
-            py = origin_y + y * config.CELL_SIZE
-            pygame.draw.line(surface, config.GRID_COLOR, (origin_x, py), (config.WINDOW_SIZE[0], py))
-
-    def _draw_food(self, surface: pygame.Surface) -> None:
-        pulse = 0.5 + 0.5 * math.sin(self.engine.elapsed * 6.0)
-        radius = int(config.CELL_SIZE * (0.30 + 0.06 * pulse))
-        rect = ui.cell_rect(self.world.food.x, self.world.food.y)
-        pygame.draw.circle(surface, config.FOOD_COLOR, rect.center, radius)
-        pygame.draw.circle(surface, (255, 180, 180), rect.center, max(1, radius // 3))
-
-    def _draw_snake(self, surface: pygame.Surface) -> None:
-        length = self.world.length
-        for index, segment in enumerate(self.world.snake):
-            if index == 0:
-                color = ui.lerp_color(config.SNAKE_HEAD_COLOR, (255, 255, 255), self._flash * 0.6)
-                rect = ui.cell_rect(segment.x, segment.y, inset=1)
-                pygame.draw.rect(surface, color, rect, border_radius=6)
-                self._draw_eyes(surface, rect)
-            else:
-                t = index / max(1, length - 1)
-                color = ui.lerp_color(config.SNAKE_BODY_COLOR, config.SNAKE_TAIL_COLOR, t)
-                pygame.draw.rect(
-                    surface, color, ui.cell_rect(segment.x, segment.y, inset=2), border_radius=4
-                )
-
-    def _draw_eyes(self, surface: pygame.Surface, head_rect: pygame.Rect) -> None:
-        direction = self.world.direction
-        offset = config.CELL_SIZE // 5
-        side = (-direction.y, direction.x)  # perpendicular
-        for sign in (-1, 1):
-            cx = head_rect.centerx + direction.x * offset + side[0] * offset * sign
-            cy = head_rect.centery + direction.y * offset + side[1] * offset * sign
-            pygame.draw.circle(surface, (10, 20, 14), (int(cx), int(cy)), max(1, offset // 2))
 
 
 # --------------------------------------------------------------------------- #
@@ -250,7 +311,11 @@ class PauseScene(Scene):
         ui.dim(surface, 150)
         width, height = config.WINDOW_SIZE
         ui.draw_text(
-            surface, self.engine.fonts["big"], "PAUSED", config.TEXT_COLOR, center=(width // 2, height // 2 - 10)
+            surface,
+            self.engine.fonts["big"],
+            "PAUSED",
+            config.TEXT_COLOR,
+            center=(width // 2, height // 2 - 10),
         )
         ui.draw_text(
             surface,
@@ -289,8 +354,12 @@ class GameOverScene(Scene):
         fonts = self.engine.fonts
         cause = "you hit a wall" if self.outcome is StepOutcome.DEAD_WALL else "you bit yourself"
 
-        ui.draw_text(surface, fonts["big"], "GAME OVER", config.FOOD_COLOR, center=(width // 2, height // 2 - 52))
-        ui.draw_text(surface, fonts["small"], cause, config.TEXT_DIM_COLOR, center=(width // 2, height // 2 - 18))
+        ui.draw_text(
+            surface, fonts["big"], "GAME OVER", config.FOOD_COLOR, center=(width // 2, height // 2 - 52)
+        )
+        ui.draw_text(
+            surface, fonts["small"], cause, config.TEXT_DIM_COLOR, center=(width // 2, height // 2 - 18)
+        )
         ui.draw_text(
             surface,
             fonts["normal"],
@@ -300,7 +369,11 @@ class GameOverScene(Scene):
         )
         if self.record:
             ui.draw_text(
-                surface, fonts["normal"], "NEW BEST!", config.ACCENT_COLOR, center=(width // 2, height // 2 + 44)
+                surface,
+                fonts["normal"],
+                "NEW BEST!",
+                config.ACCENT_COLOR,
+                center=(width // 2, height // 2 + 44),
             )
         else:
             ui.draw_text(

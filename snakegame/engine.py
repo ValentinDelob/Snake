@@ -30,6 +30,8 @@ class RunStats:
     games: int = 0
     steps: int = 0
     frames: int = 0
+    fps: float = 0.0
+    slow_frames: int = 0
     reason: str = "unknown"
     errors: list[str] = field(default_factory=list)
 
@@ -152,6 +154,16 @@ class Engine:
             self.elapsed += dt
             self.stats.frames += 1
 
+            # A stutter is worth a log line: it is the only trace left once the
+            # window is closed.
+            if dt > config.SLOW_FRAME_SECONDS and self.stats.frames > 3:
+                self.stats.slow_frames += 1
+                log.warning(
+                    "Slow frame: %.0f ms (scene=%s)",
+                    dt * 1000.0,
+                    self.scene.name if self.scene else "-",
+                )
+
             if self.driver is not None:
                 try:
                     self.driver.on_frame(self)
@@ -173,14 +185,16 @@ class Engine:
             self._draw()
 
         self.stats.best_score = self.profile.high_score
+        self.stats.fps = self.stats.frames / self.elapsed if self.elapsed > 0 else 0.0
         log.info(
-            "Loop finished: reason=%s games=%s last=%s best=%s steps=%s frames=%s errors=%s",
+            "Loop finished: reason=%s games=%s last=%s best=%s steps=%s frames=%s fps=%.1f errors=%s",
             self.stats.reason,
             self.stats.games,
             self.stats.last_score,
             self.stats.best_score,
             self.stats.steps,
             self.stats.frames,
+            self.stats.fps,
             self.stats.errors or "none",
         )
         pygame.quit()

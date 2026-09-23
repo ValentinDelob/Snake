@@ -26,6 +26,7 @@ WINDOW_SIZE = (BOARD_SIZE[0], BOARD_SIZE[1] + HUD_HEIGHT)
 # --------------------------------------------------------------------------- #
 UI_FPS = 60          # rendering / input rate
 STEP_HZ = 10.0       # how many times per second the snake advances
+SLOW_FRAME_SECONDS = 0.15  # a frame slower than this is logged as a stutter
 
 # --------------------------------------------------------------------------- #
 # Palette
@@ -38,11 +39,25 @@ SNAKE_HEAD_COLOR = (120, 255, 150)
 SNAKE_BODY_COLOR = (0, 200, 90)
 SNAKE_TAIL_COLOR = (0, 120, 60)
 FOOD_COLOR = (255, 70, 70)
+EYE_COLOR = (10, 20, 14)
 TEXT_COLOR = (236, 240, 244)
 TEXT_DIM_COLOR = (130, 142, 158)
 ACCENT_COLOR = (255, 208, 80)
 OVERLAY_COLOR = (0, 0, 0, 170)
 
+# --------------------------------------------------------------------------- #
+# 3D view
+# --------------------------------------------------------------------------- #
+SKY_COLOR = (9, 12, 20)
+HORIZON_COLOR = (26, 34, 50)
+FLOOR_COLOR = (34, 44, 58)
+FLOOR_GRID_COLOR = (52, 66, 84)
+WALL_COLOR = (70, 86, 110)
+DEFAULT_VIEW = "3d"
+
+# --------------------------------------------------------------------------- #
+# Fonts
+# --------------------------------------------------------------------------- #
 FONT_NAME = "consolas,monospace"
 FONT_SIZE_SMALL = 16
 FONT_SIZE = 22

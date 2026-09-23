@@ -77,13 +77,16 @@ def _run_selftest(args, log) -> int:
     for failure in failures:
         log.error("SELFTEST check failed: %s", failure)
     log.info(
-        "SELFTEST %s: scenes=%s games=%s best_of_session=%s steps=%s frames=%s reason=%s",
+        "SELFTEST %s: scenes=%s views=%s cameras=%s games=%s best_of_session=%s steps=%s frames=%s fps=%.1f reason=%s",
         "PASS" if not failures else "FAIL",
         sorted(driver.scenes_seen),
+        sorted(driver.views_seen),
+        sorted(driver.cameras_seen),
         stats.games,
         stats.max_score,
         stats.steps,
         stats.frames,
+        stats.fps,
         stats.reason,
     )
     return 0 if not failures else 1
