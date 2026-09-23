@@ -41,6 +41,9 @@ var _turn_started := 0.0
 var _heading_before := 0.0
 var _saved_agent: GreedyAgent = null
 
+## True once the body has been caught mid-growth, which is what proves the
+## snake lengthens progressively instead of jumping to its new size.
+var _growth_observed := false
 var _spacing_checks := 0
 var _spacing_errors := 0
 var _next_spacing_check := 0.5
@@ -93,6 +96,12 @@ func _on_play(game) -> void:
 
 	var now: float = game.play_time()
 	_check_body_spacing(game, now)
+	if game.world.body_length < game.world.target_body_length - 0.01:
+		if not _growth_observed:
+			Journal.info("selftest", "growth caught in progress: %.2f of %.2f units" % [
+				game.world.body_length, game.world.target_body_length,
+			])
+		_growth_observed = true
 
 	for mark: float in schedule:
 		if now >= mark and not _done_marks.has(mark):
@@ -226,6 +235,8 @@ func verify(game) -> Array:
 		failures.append("body segments drifted apart %d times" % _spacing_errors)
 	if int(stats["max_score"]) <= 0:
 		failures.append("the bot never scored a point")
+	elif not _growth_observed:
+		failures.append("the body jumped to its new length instead of growing into it")
 	if int(stats["games"]) < 2:
 		failures.append("expected 2 finished games, got %d" % int(stats["games"]))
 	if not _retried:

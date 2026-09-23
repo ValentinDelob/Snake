@@ -18,7 +18,8 @@ var height: float
 
 var head_position := Vector2.ZERO
 var heading := 0.0          # radians, 0 points towards +X
-var body_length := 0.0      # world units of body trailing the head
+var body_length := 0.0          # world units of body actually grown
+var target_body_length := 0.0   # what eating has earned so far
 var turn_input := 0.0       # -1 turn left, +1 turn right, 0 straight
 
 var food := Vector2.ZERO
@@ -52,6 +53,7 @@ func reset() -> void:
 	heading = 0.0
 	turn_input = 0.0
 	body_length = GameConfig.START_BODY_LENGTH
+	target_body_length = GameConfig.START_BODY_LENGTH
 	score = 0
 	steps = 0
 	distance_travelled = 0.0
@@ -83,14 +85,20 @@ func total_length() -> float:
 	return body_length + GameConfig.SNAKE_RADIUS * 2.0
 
 
-## Positions of the drawn body segments, closest to the head first.
+## Positions used by collisions, closest to the head first.
 func body_points() -> Array[Vector2]:
 	if not _points_dirty:
 		return _points_cache
 
+	_points_cache = sample_path(GameConfig.SEGMENT_SPACING, segment_count())
+	_points_dirty = false
+	return _points_cache
+
+
+## Walk the path travelled by the head and return evenly spaced points.
+func sample_path(spacing: float, count: int) -> Array[Vector2]:
 	var points: Array[Vector2] = []
-	var count := segment_count()
-	var wanted := GameConfig.SEGMENT_SPACING
+	var wanted := spacing
 	var travelled := 0.0
 	var current := head_position
 
@@ -100,7 +108,7 @@ func body_points() -> Array[Vector2]:
 		while span > 0.0 and travelled + span >= wanted and points.size() < count:
 			var ratio := (wanted - travelled) / span
 			points.append(current.lerp(next_point, ratio))
-			wanted += GameConfig.SEGMENT_SPACING
+			wanted += spacing
 		travelled += span
 		current = next_point
 		if points.size() >= count:
@@ -113,10 +121,8 @@ func body_points() -> Array[Vector2]:
 		tail_direction = (points[points.size() - 1] - points[points.size() - 2]).normalized()
 	while points.size() < count:
 		var last: Vector2 = points[points.size() - 1] if not points.is_empty() else head_position
-		points.append(last + tail_direction * GameConfig.SEGMENT_SPACING)
+		points.append(last + tail_direction * spacing)
 
-	_points_cache = points
-	_points_dirty = false
 	return points
 
 
@@ -167,6 +173,11 @@ func steer(amount: float) -> void:
 ## Advance the simulation by one fixed step.
 func step(delta: float) -> Outcome:
 	steps += 1
+	if body_length < target_body_length:
+		body_length = minf(
+			target_body_length, body_length + GameConfig.GROWTH_SPEED * delta
+		)
+		_points_dirty = true
 	heading = wrapf(heading + turn_input * GameConfig.TURN_RATE * delta, -PI, PI)
 
 	var travel := GameConfig.SNAKE_SPEED * delta
@@ -190,8 +201,7 @@ func step(delta: float) -> Outcome:
 
 	if head_position.distance_to(food) < GameConfig.SNAKE_RADIUS + GameConfig.FOOD_RADIUS:
 		score += 1
-		body_length += GameConfig.GROWTH_PER_FOOD
-		_points_dirty = true
+		target_body_length += GameConfig.GROWTH_PER_FOOD
 		food = spawn_food()
 		return Outcome.ATE
 
@@ -200,7 +210,7 @@ func step(delta: float) -> Outcome:
 
 func _trim_path() -> void:
 	# Keep a little more than the body needs, no more.
-	var budget := body_length + 2.0
+	var budget := maxf(body_length, target_body_length) + 2.0
 	var travelled := 0.0
 	for index in range(1, _path.size()):
 		travelled += _path[index - 1].distance_to(_path[index])

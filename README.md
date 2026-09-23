@@ -15,7 +15,8 @@ game/                      the Godot project (open this folder in Godot)
   scripts/
     game.gd                state machine, input, fixed-step simulation
     snake_world.gd         continuous rules: position, heading, trailing path
-    board_view.gd          floor, grid, ramparts, pooled snake meshes, food
+    board_view.gd          floor, ramparts, food and the snake mesh
+    snake_mesh.gd          the body: one procedural tube swept along the path
     camera_rig.gd          follow / overview / chase cameras + flat top view
     hud.gd                 score bar and centred overlay
     journal.gd             autoload: structured logging
@@ -49,6 +50,13 @@ and each bite makes the body longer.
 
 Because steering is relative, every camera is playable; chase is simply the
 most immersive.
+
+The body is a single procedural tube rebuilt every frame: a ring of vertices
+is swept along the path the head travelled, from a rounded nose to a pointed
+tail, so there are no repeated meshes and no visible joints. Thickness bulges
+at the head and tapers towards the tail, and the green gradient is carried by
+vertex colours. Eating does not snap the body to its new length either: the
+snake grows into it over a fraction of a second.
 
 ## Cameras
 

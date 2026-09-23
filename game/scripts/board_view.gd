@@ -3,30 +3,23 @@ extends Node3D
 
 ## Everything visible on the board: floor, ramparts, snake and food.
 ##
-## The static geometry is built once; the snake segments follow continuous
-## positions every frame and their meshes are pooled, so nothing is created
-## or destroyed while playing.
+## The static geometry is built once. The snake itself is a single procedural
+## tube rebuilt every frame by SnakeMesh, so the body is continuous rather
+## than a string of separate meshes.
 
-const HEAD_SIZE := 0.78
 const WALL_HEIGHT := 0.8
 const WALL_THICKNESS := 0.4
 const BODY_HEIGHT := 0.4
 
-var _segments: Array[MeshInstance3D] = []
 var _eyes: Array[MeshInstance3D] = []
-var _head: MeshInstance3D
+var _body: SnakeMesh
 var _food: MeshInstance3D
-var _head_material: StandardMaterial3D
-var _body_materials: Array[StandardMaterial3D] = []
-var _body_mesh: SphereMesh
 
 
 func build(world: SnakeWorld) -> void:
 	for child in get_children():
 		child.queue_free()
-	_segments.clear()
 	_eyes.clear()
-	_body_materials.clear()
 
 	_build_floor(world)
 	_build_walls(world)
@@ -34,27 +27,10 @@ func build(world: SnakeWorld) -> void:
 	Journal.info("board", "Board built for a %.0fx%.0f arena" % [world.width, world.height])
 
 
-## Move the pooled meshes to match the current state of the world.
+## Reshape the snake and move the food to match the current world.
 func refresh(world: SnakeWorld, elapsed: float, flash: float) -> void:
-	var points := world.body_points()
-	_ensure_segments(points.size())
-
-	for index in range(_segments.size()):
-		var mesh_instance := _segments[index]
-		if index >= points.size():
-			mesh_instance.visible = false
-			continue
-		var point: Vector2 = points[index]
-		mesh_instance.visible = true
-		mesh_instance.position = Vector3(point.x, BODY_HEIGHT, point.y)
-		mesh_instance.material_override = _body_material_for(
-			float(index) / maxf(1.0, float(points.size() - 1))
-		)
-
-	var head := world.head_position
-	_head.position = Vector3(head.x, BODY_HEIGHT, head.y)
-	_head.rotation.y = -world.heading
-	_head_material.emission_energy_multiplier = 0.15 + flash * 0.85
+	_body.rebuild(world, BODY_HEIGHT)
+	_body.set_flash(flash)
 	_place_eyes(world)
 
 	_food.position = Vector3(
@@ -140,29 +116,13 @@ func _build_walls(world: SnakeWorld) -> void:
 
 
 func _build_actors() -> void:
-	_body_mesh = SphereMesh.new()
-	_body_mesh.radius = GameConfig.SNAKE_RADIUS
-	_body_mesh.height = GameConfig.SNAKE_RADIUS * 2.0
-	_body_mesh.radial_segments = 12
-	_body_mesh.rings = 6
-
-	var head_mesh := BoxMesh.new()
-	head_mesh.size = Vector3(HEAD_SIZE, HEAD_SIZE * 0.82, HEAD_SIZE * 0.96)
-	_head_material = StandardMaterial3D.new()
-	_head_material.albedo_color = GameConfig.SNAKE_HEAD_COLOR
-	_head_material.emission_enabled = true
-	_head_material.emission = GameConfig.SNAKE_HEAD_COLOR
-	_head_material.emission_energy_multiplier = 0.15
-
-	_head = MeshInstance3D.new()
-	_head.name = "Head"
-	_head.mesh = head_mesh
-	_head.material_override = _head_material
-	add_child(_head)
+	_body = SnakeMesh.new()
+	_body.name = "Body"
+	add_child(_body)
 
 	var eye_mesh := SphereMesh.new()
-	eye_mesh.radius = 0.09
-	eye_mesh.height = 0.18
+	eye_mesh.radius = 0.085
+	eye_mesh.height = 0.17
 	eye_mesh.radial_segments = 8
 	eye_mesh.rings = 4
 	var eye_material := StandardMaterial3D.new()
@@ -191,33 +151,16 @@ func _build_actors() -> void:
 	add_child(_food)
 
 
-func _ensure_segments(count: int) -> void:
-	while _segments.size() < count:
-		var instance := MeshInstance3D.new()
-		instance.name = "Segment%d" % _segments.size()
-		instance.mesh = _body_mesh
-		add_child(instance)
-		_segments.append(instance)
-
-
-func _body_material_for(shade: float) -> StandardMaterial3D:
-	var bucket := clampi(int(shade * 8.0), 0, 8)
-	while _body_materials.size() <= bucket:
-		var material := StandardMaterial3D.new()
-		material.albedo_color = GameConfig.SNAKE_BODY_COLOR.lerp(
-			GameConfig.SNAKE_TAIL_COLOR, float(_body_materials.size()) / 8.0
-		)
-		material.roughness = 0.7
-		_body_materials.append(material)
-	return _body_materials[bucket]
-
-
 func _place_eyes(world: SnakeWorld) -> void:
 	var forward := Vector3(world.direction().x, 0.0, world.direction().y)
 	var side := forward.cross(Vector3.UP)
 	var center := Vector3(world.head_position.x, BODY_HEIGHT, world.head_position.y)
+	# The eyes must sit on the skin of the tube, not inside it, so they are
+	# pushed out along a direction and not along each axis separately.
+	var bulge := GameConfig.SNAKE_RADIUS * GameConfig.HEAD_BULGE
 	for index in range(_eyes.size()):
 		var sign_value := -1.0 if index == 0 else 1.0
-		_eyes[index].position = (
-			center + forward * 0.36 + side * (0.22 * sign_value) + Vector3(0.0, 0.18, 0.0)
-		)
+		var outwards := (
+			forward * 0.45 + side * (0.78 * sign_value) + Vector3.UP * 0.58
+		).normalized()
+		_eyes[index].position = center + outwards * (bulge * 0.95)
