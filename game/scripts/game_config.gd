@@ -2,21 +2,35 @@ class_name GameConfig
 extends RefCounted
 
 ## Tunable constants shared by every script, so gameplay code stays free of
-## magic numbers. One grid cell is one world unit; X grows right, Z grows
-## away from the player, Y is up.
+## magic numbers.
+##
+## The board is a continuous rectangle, not a grid: positions are floats,
+## X grows right and Y (of the 2D simulation) maps to Z in the 3D world.
 
-const GRID_WIDTH := 28
-const GRID_HEIGHT := 18
+const BOARD_WIDTH := 30.0
+const BOARD_HEIGHT := 20.0
 
-## How many times per second the snake advances, independent of frame rate.
-const STEP_HZ := 10.0
-const STEP_INTERVAL := 1.0 / STEP_HZ
+## The snake never stops: it cruises forward and only turns.
+const SNAKE_SPEED := 5.2          # world units per second
+const TURN_RATE := 3.1            # radians per second while a turn is held
+const SNAKE_RADIUS := 0.36
+const SEGMENT_SPACING := 0.42     # distance between two drawn body segments
+const START_BODY_LENGTH := 2.2    # world units of body behind the head
+const GROWTH_PER_FOOD := 1.1
+## Body close to the head is ignored by self collision: it always touches.
+const SELF_COLLISION_SKIP := 1.5
+
+const FOOD_RADIUS := 0.4
+
+## The simulation runs at a fixed rate so it behaves the same on any machine.
+const SIM_HZ := 120.0
+const SIM_STEP := 1.0 / SIM_HZ
 
 ## A frame slower than this is logged as a stutter.
 const SLOW_FRAME_SECONDS := 0.15
 
 const FLOOR_COLOR := Color(0.13, 0.17, 0.23)
-const GRID_COLOR := Color(0.24, 0.30, 0.38)
+const GRID_COLOR := Color(0.18, 0.22, 0.29)
 const WALL_COLOR := Color(0.27, 0.34, 0.43)
 const SNAKE_HEAD_COLOR := Color(0.47, 1.0, 0.59)
 const SNAKE_BODY_COLOR := Color(0.0, 0.78, 0.35)

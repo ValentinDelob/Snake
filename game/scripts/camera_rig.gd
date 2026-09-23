@@ -4,8 +4,8 @@ extends Camera3D
 ## The three 3D cameras, plus the flat top-down view inherited from the
 ## original 2D game.
 ##
-## In chase mode the board has no fixed orientation on screen, so the game
-## switches to relative steering: left and right turn the snake.
+## Steering is always relative now (left and right turn the head), so every
+## camera is playable; chase is simply the most immersive one.
 
 enum Mode { FOLLOW, OVERVIEW, CHASE }
 
@@ -35,10 +35,6 @@ func mode_name() -> String:
 
 func view_name() -> String:
 	return "flat" if flat else "3d"
-
-
-func uses_relative_steering() -> bool:
-	return not flat and mode == Mode.CHASE
 
 
 func cycle_mode() -> void:
@@ -79,7 +75,7 @@ func update_rig(delta: float, world: SnakeWorld) -> void:
 		_look = wanted_look
 		_settled = true
 	else:
-		var speed := 5.5 if mode == Mode.CHASE else 4.0
+		var speed := 6.5 if mode == Mode.CHASE else 4.0
 		var weight := 1.0 - exp(-delta * speed)
 		_eye = _eye.lerp(wanted_eye, weight)
 		_look = _look.lerp(wanted_look, weight)
@@ -89,9 +85,9 @@ func update_rig(delta: float, world: SnakeWorld) -> void:
 
 
 func _desired_pose(world: SnakeWorld) -> Array:
-	var width := float(world.width)
-	var height := float(world.height)
-	var head := Vector3(world.head().x + 0.5, 0.5, world.head().y + 0.5)
+	var width := world.width
+	var height := world.height
+	var head := Vector3(world.head_position.x, 0.5, world.head_position.y)
 
 	if _preview:
 		var board_center := Vector3(width / 2.0, 0.0, height / 2.0)
@@ -102,13 +98,13 @@ func _desired_pose(world: SnakeWorld) -> Array:
 			var center := Vector3(width / 2.0, 0.0, height / 2.0)
 			return [center + Vector3(0.0, 22.0, 15.0), center]
 		Mode.CHASE:
-			var forward := Vector3(world.direction.x, 0.0, world.direction.y)
+			var forward := Vector3(world.direction().x, 0.0, world.direction().y)
 			return [
 				head - forward * 5.0 + Vector3(0.0, 3.0, 0.0),
 				head + forward * 4.5 + Vector3(0.0, 0.1, 0.0),
 			]
 		_:
-			# FOLLOW: keep the head roughly centred, without leaving the board
+			# FOLLOW: keep the head roughly centred, without leaving the arena
 			var look := Vector3(
 				clampf(head.x, 7.0, maxf(7.0, width - 7.0)),
 				0.0,
@@ -120,8 +116,8 @@ func _desired_pose(world: SnakeWorld) -> Array:
 func _apply_flat(world: SnakeWorld) -> void:
 	projection = PROJECTION_ORTHOGONAL
 	size = world.height + 5.0
-	var center := Vector3(world.width / 2.0, 0.0, world.height / 2.0)
+	var center := Vector3(world.width * 0.5, 0.0, world.height * 0.5)
 	# Straight down: the up vector must not be parallel to the view direction,
-	# and -Z keeps the grid oriented like the original 2D board.
+	# and -Z keeps the arena oriented like the original 2D board.
 	look_at_from_position(center + Vector3(0.0, 24.0, 0.0), center, Vector3(0.0, 0.0, -1.0))
 	_settled = false

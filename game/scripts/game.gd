@@ -2,27 +2,21 @@ extends Node3D
 
 ## The game itself: state machine, input, fixed-step simulation and the glue
 ## between the rules (SnakeWorld), the view (BoardView) and the cameras.
+##
+## The snake cruises forward on its own; the player only turns the head, so
+## left and right are steering commands, not directions on a board.
 
 enum State { MENU, PLAY, PAUSE, GAMEOVER }
 
 const STATE_NAMES := ["menu", "play", "pause", "gameover"]
 
-const MOVE_KEYS := {
-	KEY_UP: SnakeWorld.UP,
-	KEY_W: SnakeWorld.UP,
-	KEY_Z: SnakeWorld.UP,      # AZERTY
-	KEY_DOWN: SnakeWorld.DOWN,
-	KEY_S: SnakeWorld.DOWN,
-	KEY_LEFT: SnakeWorld.LEFT,
-	KEY_A: SnakeWorld.LEFT,
-	KEY_Q: SnakeWorld.LEFT,    # AZERTY
-	KEY_RIGHT: SnakeWorld.RIGHT,
-	KEY_D: SnakeWorld.RIGHT,
-}
-
+## Held keys steer continuously: -1 turns left, +1 turns right.
 const TURN_KEYS := {
-	KEY_LEFT: -1, KEY_A: -1, KEY_Q: -1,
-	KEY_RIGHT: 1, KEY_D: 1,
+	KEY_LEFT: -1.0,
+	KEY_A: -1.0,
+	KEY_Q: -1.0,     # AZERTY
+	KEY_RIGHT: 1.0,
+	KEY_D: 1.0,
 }
 
 @onready var _camera: CameraRig = $Camera
@@ -52,9 +46,10 @@ var _demo := false
 var _accumulator := 0.0
 var _flash := 0.0
 var _elapsed := 0.0
+var _play_time := 0.0
 var _seed := 0
 var _max_steps := 0
-var _last_outcome: SnakeWorld.Outcome = SnakeWorld.Outcome.MOVED
+var _held_turns := {}
 var _last_record := false
 
 
@@ -65,7 +60,7 @@ func _ready() -> void:
 
 	_sun.rotation_degrees = Vector3(-62.0, -28.0, 0.0)
 
-	world = SnakeWorld.new(GameConfig.GRID_WIDTH, GameConfig.GRID_HEIGHT, _seed)
+	world = SnakeWorld.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, _seed)
 	_board.build(world)
 
 	_camera.set_mode_by_name(str(PlayerProfile.get_preference("camera")))
@@ -102,7 +97,7 @@ func _parse_arguments() -> void:
 			"--steps":
 				_max_steps = int(value)
 	if _max_steps <= 0:
-		_max_steps = 400
+		_max_steps = int(GameConfig.SIM_HZ * 60.0)  # one minute of simulation
 	if _driver != null:
 		PlayerProfile.use_path("user://selftest_profile.json")
 
@@ -124,10 +119,13 @@ func _process(delta: float) -> void:
 		_driver.on_frame(self)
 
 	if state == State.PLAY:
+		_play_time += delta
 		_flash = maxf(0.0, _flash - delta * 3.0)
-		_accumulator += delta
-		while _accumulator >= GameConfig.STEP_INTERVAL and world.alive and state == State.PLAY:
-			_accumulator -= GameConfig.STEP_INTERVAL
+		# A fixed step keeps the snake behaving the same on any machine; the
+		# accumulator is capped so a long stall cannot teleport it.
+		_accumulator = minf(_accumulator + delta, 0.25)
+		while _accumulator >= GameConfig.SIM_STEP and world.alive and state == State.PLAY:
+			_accumulator -= GameConfig.SIM_STEP
 			_advance()
 
 	_camera.update_rig(delta, world)
@@ -139,18 +137,23 @@ func _process(delta: float) -> void:
 	)
 
 
+func play_time() -> float:
+	return _play_time
+
+
 func _advance() -> void:
 	if agent != null:
-		var wanted: Variant = agent.decide(world)
-		if wanted != null:
-			world.steer(wanted)
+		world.steer(agent.decide(world))
+	else:
+		world.steer(_turn_from_keys())
 
-	var outcome := world.step()
+	var outcome := world.step(GameConfig.SIM_STEP)
 	stats["steps"] += 1
 
 	if outcome == SnakeWorld.Outcome.ATE:
 		_flash = 1.0
-		Journal.debug("game", "Food eaten: score=%d length=%d" % [world.score, world.length()])
+		stats["max_score"] = maxi(int(stats["max_score"]), world.score)
+		Journal.debug("game", "Food eaten: score=%d body=%.1f" % [world.score, world.body_length])
 	elif SnakeWorld.is_death(outcome):
 		_game_over(outcome)
 		return
@@ -158,6 +161,13 @@ func _advance() -> void:
 	if stats["steps"] >= _max_steps and _driver != null:
 		Journal.info("selftest", "Step budget reached (%d)" % _max_steps)
 		request_quit("step-budget")
+
+
+func _turn_from_keys() -> float:
+	var turn := 0.0
+	for keycode: int in _held_turns:
+		turn += float(_held_turns[keycode])
+	return clampf(turn, -1.0, 1.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -176,6 +186,7 @@ func _set_state(next_state: State) -> void:
 
 func _enter_menu() -> void:
 	_set_state(State.MENU)
+	_held_turns.clear()
 	_hud.set_bar_visible(false)
 	_camera.set_preview(true)
 	_hud.show_overlay(
@@ -185,8 +196,8 @@ func _enter_menu() -> void:
 		"best score  %d     games played  %d" % [
 			PlayerProfile.high_score(), PlayerProfile.games_played(),
 		],
-		"arrows / WASD / ZQSD  move      P  pause      ESC  quit\n"
-		+ "C  camera (follow, overview, chase)      V  flat view"
+		"the snake never stops: hold LEFT or RIGHT to turn  (or A / D, Q / D)\n"
+		+ "P  pause      C  camera (follow, overview, chase)      V  flat view      ESC  quit"
 	)
 
 
@@ -194,6 +205,8 @@ func _start_game() -> void:
 	world.reset()
 	_accumulator = 0.0
 	_flash = 0.0
+	_play_time = 0.0
+	_held_turns.clear()
 	_camera.set_preview(false)
 	_camera.reset()
 	_hud.hide_overlay()
@@ -204,6 +217,7 @@ func _start_game() -> void:
 func _toggle_pause() -> void:
 	if state == State.PLAY:
 		_set_state(State.PAUSE)
+		_held_turns.clear()
 		_hud.show_overlay(
 			"PAUSED", GameConfig.TEXT_COLOR, "P or SPACE  resume", "", "ESC  menu"
 		)
@@ -213,19 +227,19 @@ func _toggle_pause() -> void:
 
 
 func _game_over(outcome: SnakeWorld.Outcome) -> void:
-	_last_outcome = outcome
 	var score := world.score
 	_last_record = PlayerProfile.record_game(score)
 	stats["last_score"] = score
 	stats["max_score"] = maxi(int(stats["max_score"]), score)
 	stats["games"] = int(stats["games"]) + 1
-	Journal.info("game", "Game over (%s) at (%d,%d): score=%d length=%d steps=%d record=%s" % [
+	Journal.info("game", "Game over (%s) at (%.1f,%.1f): score=%d body=%.1f travelled=%.1f record=%s" % [
 		"wall" if outcome == SnakeWorld.Outcome.DEAD_WALL else "self",
-		world.death_cell.x, world.death_cell.y,
-		score, world.length(), world.steps, _last_record,
+		world.death_position.x, world.death_position.y,
+		score, world.body_length, world.distance_travelled, _last_record,
 	])
 
 	_set_state(State.GAMEOVER)
+	_held_turns.clear()
 	_hud.show_overlay(
 		"GAME OVER",
 		GameConfig.DANGER_COLOR,
@@ -242,9 +256,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return
 	var key_event := event as InputEventKey
-	if not key_event.pressed or key_event.echo:
+	if key_event.echo:
 		return
-	_on_key(key_event.keycode)
+
+	# Turning is held down, so releases matter as much as presses.
+	if TURN_KEYS.has(key_event.keycode):
+		if key_event.pressed:
+			_held_turns[key_event.keycode] = TURN_KEYS[key_event.keycode]
+		else:
+			_held_turns.erase(key_event.keycode)
+		return
+
+	if key_event.pressed:
+		_on_key(key_event.keycode)
 
 
 func _on_key(keycode: int) -> void:
@@ -280,18 +304,6 @@ func _play_key(keycode: int) -> void:
 		_cycle_camera()
 	elif keycode == KEY_V:
 		_toggle_view()
-	elif _camera.uses_relative_steering():
-		if TURN_KEYS.has(keycode):
-			var direction: Vector2i = (
-				SnakeWorld.turn_right(world.direction) if TURN_KEYS[keycode] > 0
-				else SnakeWorld.turn_left(world.direction)
-			)
-			world.steer(direction)
-			Journal.debug("game", "Relative turn -> (%d,%d)" % [direction.x, direction.y])
-	elif MOVE_KEYS.has(keycode):
-		var direction: Vector2i = MOVE_KEYS[keycode]
-		world.steer(direction)
-		Journal.debug("game", "Steer -> (%d,%d)" % [direction.x, direction.y])
 
 
 func _cycle_camera() -> void:
@@ -301,10 +313,7 @@ func _cycle_camera() -> void:
 	else:
 		_camera.cycle_mode()
 		PlayerProfile.set_preference("camera", _camera.mode_name())
-	Journal.info("game", "Camera: %s (steering=%s)" % [
-		_camera.mode_name(),
-		"relative" if _camera.uses_relative_steering() else "absolute",
-	])
+	Journal.info("game", "Camera: %s" % _camera.mode_name())
 
 
 func _toggle_view() -> void:
@@ -333,11 +342,12 @@ func request_quit(reason: String) -> void:
 		for failure: String in failures:
 			Journal.error("selftest", "check failed: %s" % failure)
 		exit_code = 0 if failures.is_empty() else 1
-		Journal.info("selftest", "SELFTEST %s: states=%s views=%s cameras=%s games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+		Journal.info("selftest", "SELFTEST %s: states=%s views=%s cameras=%s turns=%s games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 			"PASS" if failures.is_empty() else "FAIL",
 			str(_driver.states_seen.keys()),
 			str(_driver.views_seen.keys()),
 			str(_driver.cameras_seen.keys()),
+			str(_driver.turns_seen.keys()),
 			stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 		])
 

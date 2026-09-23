@@ -14,7 +14,7 @@ game/                      the Godot project (open this folder in Godot)
   scenes/main.tscn         world, sun, camera, board and HUD
   scripts/
     game.gd                state machine, input, fixed-step simulation
-    snake_world.gd         the rules, with no dependency on nodes
+    snake_world.gd         continuous rules: position, heading, trailing path
     board_view.gd          floor, grid, ramparts, pooled snake meshes, food
     camera_rig.gd          follow / overview / chase cameras + flat top view
     hud.gd                 score bar and centred overlay
@@ -30,7 +30,7 @@ legacy/python/             the original pygame implementation
 
 | Key | Action |
 | --- | --- |
-| Arrows, WASD, ZQSD | steer |
+| Left / Right (or A-D, Q-D) | **hold** to turn the head |
 | Enter | start a game / retry |
 | P or Space | pause / resume |
 | R | retry after a game over |
@@ -38,6 +38,17 @@ legacy/python/             the original pygame implementation
 | C | cycle camera: follow, overview, chase |
 | V | flat top-down view (the classic look) |
 | Esc | quit, or leave the current screen |
+
+## How it plays
+
+The snake never stops and there is no grid: it cruises forward at a constant
+speed on a continuous arena, and the only control is the heading - hold left
+or right to turn the head, and the body slides along the exact path the head
+travelled. Food appears at a random spot of the arena, not on cell centres,
+and each bite makes the body longer.
+
+Because steering is relative, every camera is playable; chase is simply the
+most immersive.
 
 ## Cameras
 
@@ -77,10 +88,16 @@ dist\snake.exe --selftest
 ```
 
 A bot plays while a scripted driver injects real key events: menu -> play ->
-every camera -> flat view -> pause -> resume -> game over -> retry -> quit.
+every camera -> flat view -> steering test -> pause -> resume -> game over ->
+retry -> quit. It holds the left key and then the right key and checks the
+heading actually turned each way, and it samples the body to make sure the
+segments keep a constant spacing - a gap would mean the snake jumps instead
+of sliding.
+
 Exit code `0` means every state was reached, all four views were rendered,
-the bot scored, two games completed, the frame rate stayed above 25 fps and
-nothing was logged as an error.
+both turns registered, the body stayed continuous, the bot scored, two games
+completed, the frame rate stayed above 25 fps and nothing was logged as an
+error.
 
 Useful flags: `--seed N` (deterministic food), `--steps N` (safety budget).
 
