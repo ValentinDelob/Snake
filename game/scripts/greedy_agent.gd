@@ -18,18 +18,30 @@ func decide(world: SnakeWorld) -> float:
 	if escape != 0.0:
 		return escape
 
-	var to_food := (world.food - world.head_position).angle()
-	var error := wrapf(to_food - world.heading, -PI, PI)
+	var to_target := (_target(world) - world.head_position).angle()
+	var error := wrapf(to_target - world.heading, -PI, PI)
 	if absf(error) < ALIGNED_ENOUGH:
 		return 0.0
 	return signf(error)
 
 
+## The bolt is worth a detour, but not a long one.
+func _target(world: SnakeWorld) -> Vector2:
+	if world.pickup_on_arena and not world.carried_item:
+		var to_pickup := world.head_position.distance_to(world.pickup)
+		var to_food := world.head_position.distance_to(world.food)
+		if to_pickup < to_food * 1.6:
+			return world.pickup
+	return world.food
+
+
 ## Non-zero when something is in the way, pointing to the freer side.
 func _avoid(world: SnakeWorld) -> float:
-	var ahead := _blocked(world, 0.0, LOOK_AHEAD)
-	var left := _blocked(world, -FEELER_ANGLE, LOOK_AHEAD * 0.8)
-	var right := _blocked(world, FEELER_ANGLE, LOOK_AHEAD * 0.8)
+	# Twice the speed needs twice the warning.
+	var reach: float = LOOK_AHEAD * world.speed_multiplier
+	var ahead := _blocked(world, 0.0, reach)
+	var left := _blocked(world, -FEELER_ANGLE, reach * 0.8)
+	var right := _blocked(world, FEELER_ANGLE, reach * 0.8)
 
 	if not ahead and not left and not right:
 		return 0.0

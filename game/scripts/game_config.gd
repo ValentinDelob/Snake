@@ -24,6 +24,16 @@ const SELF_COLLISION_SKIP := 1.5
 
 const FOOD_RADIUS := 0.4
 
+## Speed boost: a lightning bolt lying on the arena, kept in the item slot
+## until the player fires it with space.
+const BOOST_RADIUS := 0.5
+const BOOST_FIRST_SPAWN := Vector2(7.0, 12.0)   # seconds, min and max
+const BOOST_RESPAWN := Vector2(16.0, 28.0)      # rarer afterwards
+const BOOST_DURATION := 7.0                     # seconds of boosted speed
+const BOOST_FACTOR := 2.0                       # top speed multiplier
+const BOOST_RAMP_UP := 0.8                      # seconds to reach it
+const BOOST_RAMP_DOWN := 1.0                    # seconds to settle back
+
 ## Body mesh: a tube swept along the path the head travelled.
 const TUBE_RING_SPACING := 0.22   # distance between two rings of the tube
 const TUBE_RADIAL_SEGMENTS := 10  # vertices around the body
@@ -46,6 +56,9 @@ const SNAKE_BODY_COLOR := Color(0.0, 0.78, 0.35)
 const SNAKE_TAIL_COLOR := Color(0.0, 0.33, 0.18)
 const FOOD_COLOR := Color(1.0, 0.27, 0.27)
 const EYE_COLOR := Color(0.04, 0.08, 0.05)
+
+const BOOST_COLOR := Color(1.0, 0.86, 0.28)
+const SPARK_COLOR := Color(1.0, 0.98, 0.78)
 
 const ACCENT_COLOR := Color(1.0, 0.82, 0.31)
 const DANGER_COLOR := Color(1.0, 0.35, 0.35)

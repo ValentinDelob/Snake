@@ -5,6 +5,7 @@ extends CanvasLayer
 ## game over screens.
 
 @onready var _score: Label = $Score
+@onready var _item: Label = $Item
 @onready var _mode: Label = $Mode
 @onready var _best: Label = $Best
 @onready var _overlay: Control = $Overlay
@@ -23,6 +24,12 @@ func _ready() -> void:
 	_hint.add_theme_color_override("font_color", GameConfig.DIM_COLOR)
 
 
+## The special item slot, and the boost countdown once it is fired.
+func set_item(text: String, color: Color) -> void:
+	_item.text = text
+	_item.add_theme_color_override("font_color", color)
+
+
 func set_stats(score: int, best: int, mode_text: String) -> void:
 	_score.text = "SCORE %d" % score
 	_best.text = "BEST %d" % best
@@ -33,6 +40,7 @@ func set_bar_visible(value: bool) -> void:
 	_score.visible = value
 	_best.visible = value
 	_mode.visible = value
+	_item.visible = value
 
 
 func show_overlay(title: String, color: Color, subtitle: String, extra: String, hint: String) -> void:

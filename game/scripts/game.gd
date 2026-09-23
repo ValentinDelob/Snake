@@ -51,6 +51,7 @@ var _seed := 0
 var _max_steps := 0
 var _held_turns := {}
 var _last_record := false
+var _was_boosting := false
 
 
 # --------------------------------------------------------------------------- #
@@ -135,10 +136,30 @@ func _process(delta: float) -> void:
 		maxi(PlayerProfile.high_score(), world.score),
 		"%s %s" % [_camera.view_name().to_upper(), _camera.mode_name()]
 	)
+	_refresh_item_slot()
 
 
 func play_time() -> float:
 	return _play_time
+
+
+func _refresh_item_slot() -> void:
+	if world.boost_time_left > 0.0:
+		_hud.set_item(
+			"SPEED BOOST  x%.1f   %.1fs" % [world.speed_multiplier, world.boost_time_left],
+			GameConfig.SPARK_COLOR
+		)
+	elif world.carried_item:
+		_hud.set_item("ITEM  SPEED BOOST   [SPACE]", GameConfig.BOOST_COLOR)
+	else:
+		_hud.set_item("ITEM  empty", GameConfig.DIM_COLOR)
+
+
+func _use_item() -> void:
+	if not world.use_item():
+		Journal.debug("game", "Space pressed with an empty item slot")
+		return
+	Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
 
 
 func _advance() -> void:
@@ -149,6 +170,15 @@ func _advance() -> void:
 
 	var outcome := world.step(GameConfig.SIM_STEP)
 	stats["steps"] += 1
+
+	if world.picked_up_this_step:
+		_board.play_pickup_flash(world.pickup, _elapsed)
+		Journal.info("game", "Speed bolt collected at (%.1f,%.1f)" % [
+			world.pickup.x, world.pickup.y,
+		])
+	if _was_boosting and not world.boosting():
+		Journal.info("game", "Boost over, back to cruising speed")
+	_was_boosting = world.boosting()
 
 	if outcome == SnakeWorld.Outcome.ATE:
 		_flash = 1.0
@@ -207,6 +237,7 @@ func _start_game() -> void:
 	_flash = 0.0
 	_play_time = 0.0
 	_held_turns.clear()
+	_was_boosting = false
 	_camera.set_preview(false)
 	_camera.reset()
 	_hud.hide_overlay()
@@ -219,7 +250,7 @@ func _toggle_pause() -> void:
 		_set_state(State.PAUSE)
 		_held_turns.clear()
 		_hud.show_overlay(
-			"PAUSED", GameConfig.TEXT_COLOR, "P or SPACE  resume", "", "ESC  menu"
+			"PAUSED", GameConfig.TEXT_COLOR, "P  resume", "", "ESC  menu"
 		)
 	elif state == State.PAUSE:
 		_hud.hide_overlay()
@@ -281,7 +312,7 @@ func _on_key(keycode: int) -> void:
 		State.PLAY:
 			_play_key(keycode)
 		State.PAUSE:
-			if keycode == KEY_P or keycode == KEY_SPACE or keycode == KEY_ENTER:
+			if keycode == KEY_P or keycode == KEY_ENTER:
 				_toggle_pause()
 			elif keycode == KEY_ESCAPE:
 				_enter_menu()
@@ -298,7 +329,9 @@ func _on_key(keycode: int) -> void:
 func _play_key(keycode: int) -> void:
 	if keycode == KEY_ESCAPE:
 		_enter_menu()
-	elif keycode == KEY_P or keycode == KEY_SPACE:
+	elif keycode == KEY_SPACE:
+		_use_item()
+	elif keycode == KEY_P:
 		_toggle_pause()
 	elif keycode == KEY_C:
 		_cycle_camera()
@@ -327,6 +360,10 @@ func camera_rig() -> CameraRig:
 	return _camera
 
 
+func board_view() -> BoardView:
+	return _board
+
+
 func report_error(message: String) -> void:
 	Journal.error("game", message)
 	stats["errors"].append(message)
@@ -342,12 +379,13 @@ func request_quit(reason: String) -> void:
 		for failure: String in failures:
 			Journal.error("selftest", "check failed: %s" % failure)
 		exit_code = 0 if failures.is_empty() else 1
-		Journal.info("selftest", "SELFTEST %s: states=%s views=%s cameras=%s turns=%s games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+		Journal.info("selftest", "SELFTEST %s: states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 			"PASS" if failures.is_empty() else "FAIL",
 			str(_driver.states_seen.keys()),
 			str(_driver.views_seen.keys()),
 			str(_driver.cameras_seen.keys()),
 			str(_driver.turns_seen.keys()),
+			_driver.max_multiplier, _driver.multiplier_after_boost,
 			stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 		])
 

@@ -64,7 +64,9 @@ func update_rig(delta: float, world: SnakeWorld) -> void:
 		return
 
 	projection = PROJECTION_PERSPECTIVE
-	fov = MODE_FOV[Mode.OVERVIEW] if _preview else MODE_FOV[mode]
+	# A wider lens while boosting: cheap, and it sells the speed.
+	var boost_fov := 7.0 * (world.speed_multiplier - 1.0)
+	fov = (MODE_FOV[Mode.OVERVIEW] if _preview else MODE_FOV[mode]) + boost_fov
 
 	var pose := _desired_pose(world)
 	var wanted_eye: Vector3 = pose[0]

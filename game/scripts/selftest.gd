@@ -2,25 +2,33 @@ class_name SelfTestDriver
 extends RefCounted
 
 ## Scripted player driving a real, windowed run through every screen, every
-## camera and both turn directions, so a build can be validated without a
-## human at the keyboard.
+## camera, both turn directions and the speed boost, so a build can be
+## validated without a human at the keyboard.
 ##
 ## Injected key events go through the normal input pipeline, which means the
 ## test exercises the same code path as a player - including holding a turn
-## key down, which is now the only way to steer.
+## key down and firing the item with space.
+##
+## The run is a list of phases rather than absolute times: if the snake dies
+## halfway through, the driver retries and picks the phase back up.
+
+enum Phase { CAMERAS, TURNS, BOOST, PAUSE, FINISH }
 
 const PAUSE_FRAMES := 30
 const MIN_ACCEPTABLE_FPS := 25.0
 const TURN_HOLD := 0.7          # seconds a turn key stays down
 const SPACING_TOLERANCE := 0.25 # relative error allowed between body segments
+const MAX_RETRIES := 6
+const TURN_ROOM := 6.0            # world units of clearance wanted for the test
+const TURN_ROOM_TIMEOUT := 8.0    # ... but do not wait forever
 
-## play time (seconds) -> key pressed once
-var schedule := {
-	1.0: KEY_C,   # follow -> overview
-	2.0: KEY_C,   # overview -> chase
-	3.0: KEY_C,   # chase -> follow (wraps around)
-	4.0: KEY_V,   # 3D -> flat top-down view
-	5.0: KEY_V,   # back to 3D
+## seconds into the camera phase -> key pressed once
+var camera_schedule := {
+	0.8: KEY_C,   # follow -> overview
+	1.6: KEY_C,   # overview -> chase
+	2.4: KEY_C,   # chase -> follow (wraps around)
+	3.2: KEY_V,   # 3D -> flat top-down view
+	4.0: KEY_V,   # back to 3D
 }
 
 var states_seen := {}
@@ -28,18 +36,30 @@ var views_seen := {}
 var cameras_seen := {}
 var turns_seen := {}
 
+var phase: Phase = Phase.CAMERAS
+var boost_collected := false
+var pickup_flash_seen := false
+var boost_fired := false
+var max_multiplier := 1.0
+var multiplier_after_boost := -1.0
+
+var _phase_started := 0.0
 var _done_marks := {}
 var _entered_play := false
 var _pause_frames := 0
-var _paused_done := false
-var _retried := false
+var _retries := 0
 var _finished := false
 
 # manual steering test
 var _turn_phase := 0            # 0 waiting, 1 left held, 2 right held, 3 done
 var _turn_started := 0.0
+var _turn_waiting_since := -1.0
 var _heading_before := 0.0
 var _saved_agent: GreedyAgent = null
+
+# boost test
+var _bolt_requested := false
+var _boost_fired_at := 0.0
 
 ## True once the body has been caught mid-growth, which is what proves the
 ## snake lengthens progressively instead of jumping to its new size.
@@ -87,6 +107,7 @@ func _on_menu(game) -> void:
 		Journal.info("selftest", "starting a game from the menu")
 		_entered_play = true
 		press(KEY_ENTER)
+		release(KEY_ENTER)
 
 
 func _on_play(game) -> void:
@@ -95,45 +116,76 @@ func _on_play(game) -> void:
 	cameras_seen[rig.mode_name()] = true
 
 	var now: float = game.play_time()
-	_check_body_spacing(game, now)
-	if game.world.body_length < game.world.target_body_length - 0.01:
-		if not _growth_observed:
-			Journal.info("selftest", "growth caught in progress: %.2f of %.2f units" % [
-				game.world.body_length, game.world.target_body_length,
-			])
-		_growth_observed = true
+	if now < _phase_started:      # a new round started, play time went back to 0
+		_phase_started = 0.0
+		_on_round_restart(game)
+	_watch_world(game, now)
 
-	for mark: float in schedule:
-		if now >= mark and not _done_marks.has(mark):
+	match phase:
+		Phase.CAMERAS:
+			_run_cameras(now)
+		Phase.TURNS:
+			_run_turns(game, now)
+		Phase.BOOST:
+			_run_boost(game, now)
+		Phase.PAUSE:
+			_run_pause()
+		Phase.FINISH:
+			if game.agent != null:
+				# No bot and no turn held: a straight line always reaches a
+				# wall, whereas a held turn would circle forever.
+				Journal.info("selftest", "releasing the bot, straight into a wall")
+				game.agent = null
+
+
+## A death can land in the middle of a phase: undo whatever that phase was
+## holding, or the next round would run without a bot and die at once.
+func _on_round_restart(game) -> void:
+	Journal.info("selftest", "round restarted during phase %s" % Phase.keys()[phase])
+	if _turn_phase > 0 and _turn_phase < 3:
+		release(KEY_LEFT)
+		release(KEY_RIGHT)
+		game.agent = _saved_agent
+		_turn_phase = 0
+		_turn_waiting_since = -1.0
+	if phase == Phase.BOOST and multiplier_after_boost < 0.0:
+		# The boost never ran its course (dying at twice the speed is easy):
+		# drop another bolt and do it again rather than accept a half ramp.
+		_bolt_requested = false
+		boost_fired = false
+
+
+func _enter_phase(next_phase: Phase, now: float) -> void:
+	phase = next_phase
+	_phase_started = now
+	Journal.info("selftest", "phase -> %s" % Phase.keys()[next_phase])
+
+
+# --------------------------------------------------------------------------- #
+func _run_cameras(now: float) -> void:
+	var since := now - _phase_started
+	for mark: float in camera_schedule:
+		if since >= mark and not _done_marks.has(mark):
 			_done_marks[mark] = true
-			Journal.info("selftest", "pressing %s at %.1fs" % [
-				OS.get_keycode_string(schedule[mark]), now,
-			])
-			press(schedule[mark])
-			release(schedule[mark])
+			Journal.info("selftest", "pressing %s" % OS.get_keycode_string(camera_schedule[mark]))
+			press(camera_schedule[mark])
+			release(camera_schedule[mark])
 			return
-
-	if now >= 6.0 and _turn_phase < 3:
-		_drive_turn_test(game, now)
-		return
-
-	if _turn_phase == 3 and not _paused_done and now >= 10.0:
-		Journal.info("selftest", "pausing at %.1fs" % now)
-		press(KEY_P)
-		release(KEY_P)
-		return
-
-	if _paused_done and game.agent != null and now >= 12.0:
-		# No bot and no turn held: a straight line always reaches a wall,
-		# whereas a held turn would circle forever.
-		Journal.info("selftest", "releasing the bot, straight into a wall")
-		game.agent = null
+	if _done_marks.size() >= camera_schedule.size() and since >= 4.6:
+		_enter_phase(Phase.TURNS, now)
 
 
 ## Hold LEFT, then RIGHT, and check the heading actually turned each way.
-func _drive_turn_test(game, now: float) -> void:
+func _run_turns(game, now: float) -> void:
 	match _turn_phase:
 		0:
+			# Steering by hand means no bot: wait for open space first, so the
+			# test is not spent crashing into the nearest wall.
+			if not _has_room(game.world):
+				if _turn_waiting_since < 0.0:
+					_turn_waiting_since = now
+				elif now - _turn_waiting_since < TURN_ROOM_TIMEOUT:
+					return
 			Journal.info("selftest", "manual steering test: holding LEFT")
 			_saved_agent = game.agent
 			game.agent = null
@@ -156,6 +208,70 @@ func _drive_turn_test(game, now: float) -> void:
 				_record_turn(game, "right", 1.0)
 				game.agent = _saved_agent
 				_turn_phase = 3
+				_enter_phase(Phase.BOOST, now)
+
+
+## Drop a bolt, let the bot fetch it, fire it and watch the speed ramp.
+func _run_boost(game, now: float) -> void:
+	var world: SnakeWorld = game.world
+
+	if not _bolt_requested:
+		Journal.info("selftest", "dropping a speed bolt on the arena")
+		world.spawn_pickup_now()
+		_bolt_requested = true
+		return
+
+	if not boost_fired:
+		if world.carried_item:
+			Journal.info("selftest", "bolt in the slot, firing it with SPACE")
+			boost_fired = true
+			_boost_fired_at = now
+			press(KEY_SPACE)
+			release(KEY_SPACE)
+		elif not world.pickup_on_arena:
+			_bolt_requested = false   # the round restarted: drop another one
+		return
+
+	if now - _boost_fired_at >= GameConfig.BOOST_DURATION + GameConfig.BOOST_RAMP_DOWN + 0.5:
+		multiplier_after_boost = world.speed_multiplier
+		Journal.info("selftest", "boost finished: peak x%.2f, back to x%.2f" % [
+			max_multiplier, multiplier_after_boost,
+		])
+		_enter_phase(Phase.PAUSE, now)
+
+
+func _run_pause() -> void:
+	Journal.info("selftest", "pausing")
+	press(KEY_P)
+	release(KEY_P)
+
+
+func _watch_world(game, now: float) -> void:
+	var world: SnakeWorld = game.world
+	if world.carried_item and not boost_collected:
+		Journal.info("selftest", "speed bolt collected")
+		boost_collected = true
+	if boost_collected and not pickup_flash_seen and game.board_view().flash_active():
+		Journal.info("selftest", "pickup effect playing")
+		pickup_flash_seen = true
+	max_multiplier = maxf(max_multiplier, world.speed_multiplier)
+
+	if world.body_length < world.target_body_length - 0.01:
+		if not _growth_observed:
+			Journal.info("selftest", "growth caught in progress: %.2f of %.2f units" % [
+				world.body_length, world.target_body_length,
+			])
+		_growth_observed = true
+	_check_body_spacing(game, now)
+
+
+## Is the head far enough from every wall to turn freely?
+func _has_room(world: SnakeWorld) -> bool:
+	var head: Vector2 = world.head_position
+	return (
+		head.x > TURN_ROOM and head.x < world.width - TURN_ROOM
+		and head.y > TURN_ROOM and head.y < world.height - TURN_ROOM
+	)
 
 
 func _record_turn(game, label: String, expected_sign: float) -> void:
@@ -188,27 +304,35 @@ func _check_body_spacing(game, now: float) -> void:
 			return
 
 
-func _on_pause(_game) -> void:
+func _on_pause(game) -> void:
 	_pause_frames += 1
 	if _pause_frames == PAUSE_FRAMES:
 		Journal.info("selftest", "resuming after %d paused frames" % _pause_frames)
-		_paused_done = true
 		press(KEY_P)
 		release(KEY_P)
+		_enter_phase(Phase.FINISH, game.play_time())
 
 
-func _on_gameover(_game) -> void:
+func _on_gameover(game) -> void:
 	if _finished:
 		return
-	if not _retried:
-		Journal.info("selftest", "retrying from the game over screen")
-		_retried = true
-		press(KEY_R)
-		release(KEY_R)
-	else:
+
+	if phase == Phase.FINISH and int(game.stats["games"]) >= 2:
 		Journal.info("selftest", "quitting from the game over screen")
 		_finished = true
 		press(KEY_ESCAPE)
+		return
+
+	if _retries >= MAX_RETRIES:
+		Journal.warn("selftest", "too many retries, stopping here")
+		_finished = true
+		press(KEY_ESCAPE)
+		return
+
+	_retries += 1
+	Journal.info("selftest", "retrying (round %d, phase %s)" % [_retries, Phase.keys()[phase]])
+	press(KEY_R)
+	release(KEY_R)
 
 
 ## Returns the list of failed expectations (empty means success).
@@ -229,6 +353,19 @@ func verify(game) -> Array:
 		if not turns_seen.has(turn):
 			failures.append("holding %s never turned the snake" % turn)
 
+	if not boost_collected:
+		failures.append("the speed bolt was never collected")
+	if boost_collected and not pickup_flash_seen:
+		failures.append("collecting the bolt played no effect")
+	if not boost_fired:
+		failures.append("the speed boost was never fired")
+	elif max_multiplier < GameConfig.BOOST_FACTOR - 0.05:
+		failures.append("the boost only reached x%.2f" % max_multiplier)
+	elif multiplier_after_boost < 0.0:
+		failures.append("the boost never ran to completion")
+	elif multiplier_after_boost > 1.05:
+		failures.append("speed stayed at x%.2f after the boost" % multiplier_after_boost)
+
 	if _spacing_checks == 0:
 		failures.append("the body spacing was never checked")
 	if _spacing_errors > 0:
@@ -239,8 +376,6 @@ func verify(game) -> Array:
 		failures.append("the body jumped to its new length instead of growing into it")
 	if int(stats["games"]) < 2:
 		failures.append("expected 2 finished games, got %d" % int(stats["games"]))
-	if not _retried:
-		failures.append("the retry path was never exercised")
 	if float(stats["fps"]) < MIN_ACCEPTABLE_FPS:
 		failures.append("frame rate too low: %.1f fps" % float(stats["fps"]))
 	if not stats["errors"].is_empty():

@@ -10,6 +10,9 @@ extends MeshInstance3D
 ## spheres, no visible joints.
 
 const NOSE_RINGS := 4
+## Electric bands running along the body while the boost is on.
+const SPARK_BANDS := 7.0
+const SPARK_SPEED := 2.4
 
 var _mesh := ArrayMesh.new()
 var _material := StandardMaterial3D.new()
@@ -42,9 +45,19 @@ func _ready() -> void:
 		_ring_sin[index] = sin(angle)
 
 
+var _boost := 0.0
+var _boost_phase := 0.0
+
+
 ## Flash the head white for a moment after a bite.
 func set_flash(flash: float) -> void:
-	_material.emission_energy_multiplier = 0.08 + flash * 0.5
+	_material.emission_energy_multiplier = 0.08 + flash * 0.5 + _boost * 0.85
+
+
+## How strongly the lightning shows along the body, 0 to 1.
+func set_boost(intensity: float, phase: float) -> void:
+	_boost = clampf(intensity, 0.0, 1.0)
+	_boost_phase = phase
 
 
 func rebuild(world: SnakeWorld, height: float) -> void:
@@ -103,12 +116,23 @@ func _radius_at(travelled: float, along: float) -> float:
 
 
 func _shade_color(along: float) -> Color:
+	var base: Color
 	if along < 0.15:
-		return GameConfig.SNAKE_HEAD_COLOR.lerp(GameConfig.SNAKE_BODY_COLOR, along / 0.15)
-	# The darkening starts early so the gradient reads over the whole body
-	# instead of being crushed into the thin tail.
-	var mix: float = pow((along - 0.15) / 0.85, 0.65)
-	return GameConfig.SNAKE_BODY_COLOR.lerp(GameConfig.SNAKE_TAIL_COLOR, mix)
+		base = GameConfig.SNAKE_HEAD_COLOR.lerp(GameConfig.SNAKE_BODY_COLOR, along / 0.15)
+	else:
+		# The darkening starts early so the gradient reads over the whole body
+		# instead of being crushed into the thin tail.
+		var mix: float = pow((along - 0.15) / 0.85, 0.65)
+		base = GameConfig.SNAKE_BODY_COLOR.lerp(GameConfig.SNAKE_TAIL_COLOR, mix)
+
+	if _boost <= 0.0:
+		return base
+
+	# Sharp bands of light running from the head to the tail.
+	var wave := sin((along * SPARK_BANDS - _boost_phase * SPARK_SPEED) * TAU)
+	var spark: float = pow(maxf(wave, 0.0), 5.0) * _boost
+	var electric := GameConfig.BOOST_COLOR.lerp(GameConfig.SPARK_COLOR, spark)
+	return base.lerp(electric, clampf(spark * 0.9 + _boost * 0.15, 0.0, 1.0))
 
 
 func _build_surface(

@@ -16,7 +16,7 @@ game/                      the Godot project (open this folder in Godot)
     game.gd                state machine, input, fixed-step simulation
     snake_world.gd         continuous rules: position, heading, trailing path
     board_view.gd          floor, ramparts, food and the snake mesh
-    snake_mesh.gd          the body: one procedural tube swept along the path
+    snake_mesh.gd          the body: procedural tube, gradient and lightning
     camera_rig.gd          follow / overview / chase cameras + flat top view
     hud.gd                 score bar and centred overlay
     journal.gd             autoload: structured logging
@@ -32,8 +32,9 @@ legacy/python/             the original pygame implementation
 | Key | Action |
 | --- | --- |
 | Left / Right (or A-D, Q-D) | **hold** to turn the head |
+| Space | fire the item in the slot |
 | Enter | start a game / retry |
-| P or Space | pause / resume |
+| P | pause / resume |
 | R | retry after a game over |
 | M | back to the menu |
 | C | cycle camera: follow, overview, chase |
@@ -50,6 +51,15 @@ and each bite makes the body longer.
 
 Because steering is relative, every camera is playable; chase is simply the
 most immersive.
+
+### Items
+
+A lightning bolt shows up on the arena from time to time - rarely, and never
+more than one at a time. Running over it stores it in the item slot shown in
+the HUD (a small ring flashes where it was). Press **space** when you want
+it: lightning crackles along the whole body and the speed eases up to twice
+the cruising pace for seven seconds, then eases back down. Turning rate does
+not change, so a boost is as risky as it is fast.
 
 The body is a single procedural tube rebuilt every frame: a ring of vertices
 is swept along the path the head travelled, from a rounded nose to a pointed
@@ -96,16 +106,19 @@ dist\snake.exe --selftest
 ```
 
 A bot plays while a scripted driver injects real key events: menu -> play ->
-every camera -> flat view -> steering test -> pause -> resume -> game over ->
-retry -> quit. It holds the left key and then the right key and checks the
-heading actually turned each way, and it samples the body to make sure the
-segments keep a constant spacing - a gap would mean the snake jumps instead
-of sliding.
+every camera -> flat view -> steering test -> boost test -> pause -> resume
+-> game over -> retry -> quit. It holds the left key and then the right key
+and checks the heading actually turned each way; it drops a bolt, lets the
+bot fetch it, fires it with space and follows the speed ramp; and it samples
+the body to make sure the segments keep a constant spacing - a gap would mean
+the snake jumps instead of sliding. If the snake dies mid-sequence the driver
+retries and picks the phase back up.
 
 Exit code `0` means every state was reached, all four views were rendered,
-both turns registered, the body stayed continuous, the bot scored, two games
-completed, the frame rate stayed above 25 fps and nothing was logged as an
-error.
+both turns registered, the bolt was collected and fired, the speed reached
+x2 and came back to x1, the body stayed continuous and grew progressively,
+the bot scored, two games completed, the frame rate stayed above 25 fps and
+nothing was logged as an error.
 
 Useful flags: `--seed N` (deterministic food), `--steps N` (safety budget).
 

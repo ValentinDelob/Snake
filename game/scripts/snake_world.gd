@@ -23,9 +23,20 @@ var target_body_length := 0.0   # what eating has earned so far
 var turn_input := 0.0       # -1 turn left, +1 turn right, 0 straight
 
 var food := Vector2.ZERO
+
+## The speed boost: one bolt at a time on the arena, one slot to carry it.
+var pickup := Vector2.ZERO
+var pickup_on_arena := false
+var carried_item := false
+var picked_up_this_step := false
+var boost_time_left := 0.0
+var speed_multiplier := 1.0
+
 var score := 0
 var steps := 0
 var distance_travelled := 0.0
+var elapsed := 0.0
+var _next_pickup_at := 0.0
 var alive := true
 var death_position := Vector2.ZERO
 
@@ -59,6 +70,15 @@ func reset() -> void:
 	distance_travelled = 0.0
 	alive = true
 	death_position = Vector2.ZERO
+	pickup_on_arena = false
+	carried_item = false
+	picked_up_this_step = false
+	boost_time_left = 0.0
+	speed_multiplier = 1.0
+	elapsed = 0.0
+	_next_pickup_at = _rng.randf_range(
+		GameConfig.BOOST_FIRST_SPAWN.x, GameConfig.BOOST_FIRST_SPAWN.y
+	)
 	# The snake is born already stretched out behind its head, otherwise the
 	# body would start piled up on the head and trigger self collision.
 	_path = []
@@ -146,22 +166,7 @@ func hits_body(point: Vector2, ignore_from_head: float = GameConfig.SELF_COLLISI
 
 
 func spawn_food() -> Vector2:
-	var margin := GameConfig.FOOD_RADIUS + 0.8
-	for _attempt in range(40):
-		var candidate := Vector2(
-			_rng.randf_range(margin, width - margin),
-			_rng.randf_range(margin, height - margin)
-		)
-		if candidate.distance_to(head_position) < 3.0:
-			continue
-		if hits_body(candidate, 0.0):
-			continue
-		return candidate
-	# Crowded board: anywhere is better than nowhere.
-	return Vector2(
-		_rng.randf_range(margin, width - margin),
-		_rng.randf_range(margin, height - margin)
-	)
+	return _free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -173,6 +178,10 @@ func steer(amount: float) -> void:
 ## Advance the simulation by one fixed step.
 func step(delta: float) -> Outcome:
 	steps += 1
+	elapsed += delta
+	picked_up_this_step = false
+	_update_boost(delta)
+	_update_pickup_spawn()
 	if body_length < target_body_length:
 		body_length = minf(
 			target_body_length, body_length + GameConfig.GROWTH_SPEED * delta
@@ -180,7 +189,7 @@ func step(delta: float) -> Outcome:
 		_points_dirty = true
 	heading = wrapf(heading + turn_input * GameConfig.TURN_RATE * delta, -PI, PI)
 
-	var travel := GameConfig.SNAKE_SPEED * delta
+	var travel := GameConfig.SNAKE_SPEED * speed_multiplier * delta
 	head_position += direction() * travel
 	distance_travelled += travel
 
@@ -199,6 +208,17 @@ func step(delta: float) -> Outcome:
 		death_position = head_position
 		return Outcome.DEAD_SELF
 
+	if (
+		pickup_on_arena and not carried_item
+		and head_position.distance_to(pickup) < GameConfig.SNAKE_RADIUS + GameConfig.BOOST_RADIUS
+	):
+		pickup_on_arena = false
+		carried_item = true
+		picked_up_this_step = true
+		_next_pickup_at = elapsed + _rng.randf_range(
+			GameConfig.BOOST_RESPAWN.x, GameConfig.BOOST_RESPAWN.y
+		)
+
 	if head_position.distance_to(food) < GameConfig.SNAKE_RADIUS + GameConfig.FOOD_RADIUS:
 		score += 1
 		target_body_length += GameConfig.GROWTH_PER_FOOD
@@ -206,6 +226,72 @@ func step(delta: float) -> Outcome:
 		return Outcome.ATE
 
 	return Outcome.MOVING
+
+
+## Fire the carried item. Returns false when there is nothing to fire.
+func use_item() -> bool:
+	if not carried_item:
+		return false
+	carried_item = false
+	boost_time_left = GameConfig.BOOST_DURATION
+	return true
+
+
+func boosting() -> bool:
+	return boost_time_left > 0.0 or speed_multiplier > 1.001
+
+
+## How much of the boost is currently applied, 0 to 1. Drives the visuals.
+func boost_intensity() -> float:
+	return clampf(
+		(speed_multiplier - 1.0) / maxf(0.001, GameConfig.BOOST_FACTOR - 1.0), 0.0, 1.0
+	)
+
+
+func _update_boost(delta: float) -> void:
+	if boost_time_left > 0.0:
+		boost_time_left = maxf(0.0, boost_time_left - delta)
+
+	# The speed eases in and out instead of snapping, in both directions.
+	var target := GameConfig.BOOST_FACTOR if boost_time_left > 0.0 else 1.0
+	var ramp := (GameConfig.BOOST_FACTOR - 1.0) / (
+		GameConfig.BOOST_RAMP_UP if target > speed_multiplier else GameConfig.BOOST_RAMP_DOWN
+	)
+	speed_multiplier = move_toward(speed_multiplier, target, ramp * delta)
+
+
+func _update_pickup_spawn() -> void:
+	if pickup_on_arena or carried_item or elapsed < _next_pickup_at:
+		return
+	pickup = _free_spot(GameConfig.BOOST_RADIUS + 1.0, 5.0)
+	pickup_on_arena = true
+
+
+## Drop a bolt on the arena right now (used by the self-test).
+func spawn_pickup_now() -> void:
+	if carried_item:
+		return
+	pickup = _free_spot(GameConfig.BOOST_RADIUS + 1.0, 4.0)
+	pickup_on_arena = true
+
+
+func _free_spot(margin: float, clearance: float) -> Vector2:
+	for _attempt in range(40):
+		var candidate := Vector2(
+			_rng.randf_range(margin, width - margin),
+			_rng.randf_range(margin, height - margin)
+		)
+		if candidate.distance_to(head_position) < clearance:
+			continue
+		if hits_body(candidate, 0.0):
+			continue
+		if candidate.distance_to(food) < 2.0:
+			continue
+		return candidate
+	return Vector2(
+		_rng.randf_range(margin, width - margin),
+		_rng.randf_range(margin, height - margin)
+	)
 
 
 func _trim_path() -> void:
