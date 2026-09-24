@@ -52,6 +52,13 @@ func set_flash(flash: float) -> void:
 	_material.set_shader_parameter("flash", clampf(flash, 0.0, 1.0))
 
 
+## Each player has their own colours; the effects stay the same for all.
+func set_palette(head: Color, body: Color, tail: Color) -> void:
+	_material.set_shader_parameter("head_color", head)
+	_material.set_shader_parameter("body_color", body)
+	_material.set_shader_parameter("tail_color", tail)
+
+
 ## How strongly the lightning and the frost show, each 0 to 1.
 func set_effects(boost: float, slow: float) -> void:
 	_material.set_shader_parameter("boost", clampf(boost, 0.0, 1.0))

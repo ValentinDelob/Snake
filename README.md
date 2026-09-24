@@ -17,7 +17,9 @@ game/                      the Godot project (open this folder in Godot)
     arena_floor.gdshader   floor: anti-aliased grid, vignette, light pool
   scripts/
     game.gd                state machine, input, fixed-step simulation
-    snake_world.gd         continuous rules: position, heading, trailing path
+    snake_world.gd         one snake: position, heading, trailing path
+    snake_match.gd         the round: arena, food, crates, collisions, winner
+    net/session.gd         autoload: hosting, joining, the peer list
     board_view.gd          floor, ramparts, food and the snake mesh
     snake_mesh.gd          the body: procedural tube, gradient and lightning
     camera_rig.gd          follow / overview / chase cameras + flat top view
@@ -93,6 +95,25 @@ OpenGL Compatibility renderer, until a run crashed inside the NVIDIA driver
 (`nvwgf2umx.dll`, access violation, confirmed in the Windows event log).
 Vulkan takes a completely different driver path; `gl_compatibility` is kept
 as the fallback method for machines without it.
+
+### Playing together
+
+`H` in the menu opens a session and prints the addresses another machine can
+reach you on; `J` joins the last address used. Everyone waits in a lobby
+until the host presses `ENTER`, then all the snakes spawn around a circle in
+the same arena, each in its own colour, with a scoreboard in the corner.
+
+**The last one standing wins.** Running into another snake is as fatal as
+running into a wall or into yourself. A player who dies before the end does
+not leave: the camera detaches and they fly freely over the arena with the
+arrow keys, inside its bounds, until the round ends. Then everybody sees who
+won and the host can start another round.
+
+The host is authoritative: it runs the one and only match and sends the
+arena twenty times a second, while a client sends nothing but its steering.
+That way the two machines can never disagree about who died first. Between
+snapshots a client keeps the snakes gliding on their own, so the motion
+stays smooth whatever the tick rate.
 
 ### Items
 
@@ -175,7 +196,17 @@ nothing - the game or the engine - wrote an error in the log. That last
 check reads the log file back: engine errors never reached the game code,
 and one of them once shipped unnoticed.
 
-Useful flags: `--seed N` (deterministic food), `--steps N` (safety budget).
+Useful flags: `--seed N` (deterministic food), `--steps N` (safety budget),
+`--host` / `--join <address>` to open or join a session on startup, and
+`--lose-after N` to tell an instance when to stop steering, which is how the
+network test decides who falls first.
+
+The network run is the same harness with three instances on one machine: a
+host and two clients, the host told to give up first so it dies while the
+others are still playing. Each instance checks that it saw the other
+players, that their snakes really moved (which only happens if snapshots
+arrive), that the round ended with a winner all three agree on, and that
+dying put it into the spectator camera. All three must exit `0`.
 
 `--demo` is the quiet cousin: the bot plays a normal game while you keep the
 keyboard for the cameras, which is handy to look at the views or to leave the

@@ -1,17 +1,23 @@
 extends Node3D
 
-## The game itself: state machine, input, fixed-step simulation and the glue
-## between the rules (SnakeWorld), the view (BoardView) and the cameras.
+## The game: state machine, input, fixed-step simulation, networking and the
+## glue between the rules (SnakeMatch), the view (BoardView) and the cameras.
 ##
-## The snake cruises forward on its own; the player only turns the head, so
-## left and right are steering commands, not directions on a board.
+## Multiplayer is server authoritative. The host runs the one and only
+## SnakeMatch and sends snapshots; a client sends nothing but its steering
+## and mirrors what comes back, so the two machines can never disagree about
+## who died first. A client keeps the snakes gliding between snapshots so the
+## motion stays smooth at any tick rate.
 
-enum State { MENU, PLAY, PAUSE, GAMEOVER }
+enum State { MENU, LOBBY, PLAY, PAUSE, GAMEOVER }
 
-const STATE_NAMES := ["menu", "play", "pause", "gameover"]
+const STATE_NAMES := ["menu", "lobby", "play", "pause", "gameover"]
 
 ## Keys are ignored for a moment after the window opens.
 const STARTUP_INPUT_DELAY := 0.3
+
+## How often the host sends the state of the arena to the clients.
+const SNAPSHOT_HZ := 20.0
 
 ## Held keys steer continuously: -1 turns left, +1 turns right.
 const TURN_KEYS := {
@@ -22,14 +28,23 @@ const TURN_KEYS := {
 	KEY_D: 1.0,
 }
 
+## While spectating the same keys fly the camera, plus forward and back.
+const FLY_KEYS := {
+	KEY_LEFT: Vector2(-1.0, 0.0), KEY_A: Vector2(-1.0, 0.0), KEY_Q: Vector2(-1.0, 0.0),
+	KEY_RIGHT: Vector2(1.0, 0.0), KEY_D: Vector2(1.0, 0.0),
+	KEY_UP: Vector2(0.0, -1.0), KEY_W: Vector2(0.0, -1.0), KEY_Z: Vector2(0.0, -1.0),
+	KEY_DOWN: Vector2(0.0, 1.0), KEY_S: Vector2(0.0, 1.0),
+}
+
 @onready var _camera: CameraRig = $Camera
 @onready var _board: BoardView = $Board
 @onready var _hud: SnakeHud = $HUD
 @onready var _sun: DirectionalLight3D = $Sun
 
-var world: SnakeWorld
+var game_match: SnakeMatch
 var state: State = State.MENU
 var agent: GreedyAgent = null
+var spectating := false
 
 var stats := {
 	"frames": 0,
@@ -46,6 +61,7 @@ var stats := {
 var _driver: SelfTestDriver = null
 ## --demo lets the bot play while a human keeps control of the cameras.
 var _demo := false
+var _demo_crate_bonus := false
 var _accumulator := 0.0
 var _flash := 0.0
 var _elapsed := 0.0
@@ -53,10 +69,15 @@ var _play_time := 0.0
 var _seed := 0
 var _max_steps := 0
 var _held_turns := {}
+var _held_fly := {}
 var _last_record := false
 var _was_affected := false
-## Demo crates alternate between the bonus and the curse, so both can be seen.
-var _demo_crate_bonus := false
+var _snapshot_timer := 0.0
+var _winner_id := -1
+var _net_autostart := 0.0   # host self-test: start the match on its own
+## Test hook: seconds of play after which this instance stops steering, so a
+## scripted network run can decide who falls first.
+var lose_after := 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -66,14 +87,22 @@ func _ready() -> void:
 
 	_sun.rotation_degrees = Vector3(-62.0, -28.0, 0.0)
 
-	world = SnakeWorld.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, _seed)
-	_board.build(world)
+	game_match = SnakeMatch.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, _seed)
+	game_match.snake_died.connect(_on_snake_died)
+	game_match.food_eaten.connect(_on_food_eaten)
+	game_match.item_collected.connect(_on_item_collected)
+	game_match.finished.connect(_on_match_finished)
+	_board.build(game_match.width, game_match.height)
 
+	_camera.set_arena(game_match.width, game_match.height)
 	_camera.set_mode_by_name(str(PlayerProfile.get_preference("camera")))
 	_camera.set_flat(str(PlayerProfile.get_preference("view")) == "flat")
-	Journal.info("game", "View %s, camera %s, seed %d" % [
-		_camera.view_name(), _camera.mode_name(), _seed,
-	])
+
+	Session.peer_joined.connect(_on_peer_joined)
+	Session.peer_left.connect(_on_peer_left)
+	Session.connected_to_host.connect(_on_connected_to_host)
+	Session.connection_failed.connect(_on_connection_failed)
+	Session.host_disconnected.connect(_on_host_disconnected)
 
 	if _driver != null or _demo:
 		agent = GreedyAgent.new()
@@ -83,6 +112,7 @@ func _ready() -> void:
 		Journal.info("game", "Demo mode: the bot plays, cameras stay under your control")
 
 	_enter_menu()
+	_apply_network_arguments()
 
 
 func _parse_arguments() -> void:
@@ -102,10 +132,28 @@ func _parse_arguments() -> void:
 				_seed = int(value)
 			"--steps":
 				_max_steps = int(value)
+			"--host":
+				_pending_host = true
+			"--join":
+				_pending_join = value if value != "" else "127.0.0.1"
+			"--lose-after":
+				lose_after = float(value)
 	if _max_steps <= 0:
 		_max_steps = int(GameConfig.SIM_HZ * 60.0)  # one minute of simulation
 	if _driver != null:
 		PlayerProfile.use_path("user://selftest_profile.json")
+
+
+var _pending_host := false
+var _pending_join := ""
+
+
+## --host and --join let a test (or a shortcut) open a session immediately.
+func _apply_network_arguments() -> void:
+	if _pending_host:
+		_start_hosting()
+	elif _pending_join != "":
+		_join_session(_pending_join)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,86 +175,97 @@ func _process(delta: float) -> void:
 	if state == State.PLAY:
 		_play_time += delta
 		_flash = maxf(0.0, _flash - delta * 3.0)
-		# A fixed step keeps the snake behaving the same on any machine; the
-		# accumulator is capped so a long stall cannot teleport it.
+		# A fixed step keeps the snakes behaving the same on any machine; the
+		# accumulator is capped so a long stall cannot teleport them.
 		_accumulator = minf(_accumulator + delta, 0.25)
-		while _accumulator >= GameConfig.SIM_STEP and world.alive and state == State.PLAY:
+		while _accumulator >= GameConfig.SIM_STEP and state == State.PLAY:
 			_accumulator -= GameConfig.SIM_STEP
 			_advance()
+		if Session.is_host():
+			_broadcast_snapshot(delta)
+	elif state == State.LOBBY and _net_autostart > 0.0 and Session.is_host():
+		_net_autostart -= delta
+		if _net_autostart <= 0.0 and Session.players.size() > 1:
+			_start_match()
 
-	_camera.update_rig(delta, world)
-	_board.refresh(world, _elapsed, _flash)
-	_hud.set_stats(
-		world.score,
-		maxi(PlayerProfile.high_score(), world.score),
-		"%s %s" % [_camera.view_name().to_upper(), _camera.mode_name()]
-	)
-	_refresh_item_slot()
+	_update_camera(delta)
+	_board.refresh(game_match, Session.local_id(), _elapsed, _flash)
+	_refresh_hud()
+
+
+func _update_camera(delta: float) -> void:
+	if spectating:
+		var move := Vector2.ZERO
+		for keycode: int in _held_fly:
+			move += _held_fly[keycode]
+		_camera.fly(
+			delta, move.normalized(), 0.0,
+			Vector2(game_match.width, game_match.height)
+		)
+		return
+	_camera.update_rig(delta, local_snake())
+
+
+func local_snake():
+	return game_match.snakes.get(Session.local_id())
 
 
 func play_time() -> float:
 	return _play_time
 
 
-func _refresh_item_slot() -> void:
-	var total: float = (
-		GameConfig.BOOST_DURATION if world.effect == SnakeWorld.Item.SPEED
-		else GameConfig.SLOW_DURATION
+func _refresh_hud() -> void:
+	var snake = local_snake()
+	var score: int = snake.score if snake != null else 0
+	_hud.set_stats(
+		score,
+		maxi(PlayerProfile.high_score(), score),
+		"%s %s" % [_camera.view_name().to_upper(), _camera.mode_name()]
 	)
-	_hud.set_item(world.carried, world.effect, world.effect_time_left, total)
-
-
-func _use_item() -> void:
-	if not world.use_item():
-		Journal.debug("game", "Space pressed with an empty item slot")
-		return
-	Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
-
-
-func _report_pickup() -> void:
-	var crate := world.last_pickup_kind == SnakeWorld.Ground.MYSTERY
-	var color := GameConfig.SPARK_COLOR
-	if crate:
-		color = (
-			GameConfig.FROST_COLOR if world.last_roll == SnakeWorld.Item.SLOW
-			else GameConfig.MYSTERY_COLOR
+	if snake == null:
+		_hud.set_item(0, 0, 0.0, 1.0)
+	else:
+		var total: float = (
+			GameConfig.BOOST_DURATION if snake.effect == SnakeWorld.Item.SPEED
+			else GameConfig.SLOW_DURATION
 		)
-	_board.play_pickup_flash(world.last_pickup_position, _elapsed, color)
-
-	if not crate:
-		Journal.info("game", "Speed bolt collected at (%.1f,%.1f)" % [
-			world.last_pickup_position.x, world.last_pickup_position.y,
-		])
-	elif world.last_roll == SnakeWorld.Item.SLOW:
-		Journal.info("game", "Crate opened: slow down, forced on the snake for %.0fs" % [
-			GameConfig.SLOW_DURATION,
-		])
-	else:
-		Journal.info("game", "Crate opened: speed boost, stored in the slot")
+		_hud.set_item(snake.carried, snake.effect, snake.effect_time_left, total)
+	_hud.set_players(_scoreboard(), Session.local_id(), spectating)
 
 
+## A short name for a peer: the network id is a huge random number.
+func _player_name(id: int) -> String:
+	if id == Session.local_id():
+		return "you"
+	var ids: Array = game_match.snakes.keys()
+	ids.sort()
+	var index := ids.find(id)
+	return "player %d" % (index + 1) if index >= 0 else "player %d" % id
+
+
+func _scoreboard() -> Array:
+	var rows: Array = []
+	var ids: Array = game_match.snakes.keys()
+	ids.sort()
+	for id: int in ids:
+		var snake: SnakeWorld = game_match.snakes[id]
+		rows.append({"id": id, "score": snake.score, "alive": snake.alive})
+	return rows
+
+
+# --------------------------------------------------------------------------- #
 func _advance() -> void:
-	if agent != null:
-		world.steer(agent.decide(world))
-	else:
-		world.steer(_turn_from_keys())
+	var mine = local_snake()
+	if mine != null and mine.alive:
+		if agent != null:
+			mine.steer(agent.decide_in(game_match, mine))
+		else:
+			mine.steer(_turn_from_keys())
+		if Session.role == Session.Role.CLIENT:
+			_send_input.rpc_id(1, mine.turn_input)
 
-	var outcome := world.step(GameConfig.SIM_STEP)
+	game_match.step(GameConfig.SIM_STEP)
 	stats["steps"] += 1
-
-	if world.picked_up_this_step:
-		_report_pickup()
-	if _was_affected and world.effect == SnakeWorld.Item.NONE:
-		Journal.info("game", "Effect over, back to cruising speed")
-	_was_affected = world.effect != SnakeWorld.Item.NONE
-
-	if outcome == SnakeWorld.Outcome.ATE:
-		_flash = 1.0
-		stats["max_score"] = maxi(int(stats["max_score"]), world.score)
-		Journal.debug("game", "Food eaten: score=%d body=%.1f" % [world.score, world.body_length])
-	elif SnakeWorld.is_death(outcome):
-		_game_over(outcome)
-		return
 
 	if stats["steps"] >= _max_steps and _driver != null:
 		Journal.info("selftest", "Step budget reached (%d)" % _max_steps)
@@ -218,6 +277,266 @@ func _turn_from_keys() -> float:
 	for keycode: int in _held_turns:
 		turn += float(_held_turns[keycode])
 	return clampf(turn, -1.0, 1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Match events (host and solo only: a client takes these from snapshots)
+# --------------------------------------------------------------------------- #
+func _on_snake_died(id: int, cause: SnakeWorld.Outcome) -> void:
+	var snake: SnakeWorld = game_match.snakes[id]
+	Journal.info("game", "%s died (%s) at (%.1f,%.1f) with score %d" % [
+		_player_name(id), ["moving", "wall", "self", "another snake"][cause],
+		snake.death_position.x, snake.death_position.y, snake.score,
+	])
+	if id == Session.local_id():
+		_on_local_death(snake)
+
+
+func _on_local_death(snake: SnakeWorld) -> void:
+	stats["last_score"] = snake.score
+	stats["max_score"] = maxi(int(stats["max_score"]), snake.score)
+	stats["games"] = int(stats["games"]) + 1
+	_last_record = PlayerProfile.record_game(snake.score)
+	if Session.is_online() and game_match.snakes.size() > 1:
+		_start_spectating(snake.death_position)
+
+
+func _on_food_eaten(id: int) -> void:
+	if id != Session.local_id():
+		return
+	_flash = 1.0
+	var snake: SnakeWorld = game_match.snakes[id]
+	stats["max_score"] = maxi(int(stats["max_score"]), snake.score)
+	Journal.debug("game", "Food eaten: score=%d" % snake.score)
+
+
+func _on_item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item) -> void:
+	var crate := kind == SnakeWorld.Ground.MYSTERY
+	var color := GameConfig.SPARK_COLOR
+	if crate:
+		color = (
+			GameConfig.FROST_COLOR if roll == SnakeWorld.Item.SLOW
+			else GameConfig.MYSTERY_COLOR
+		)
+	var snake: SnakeWorld = game_match.snakes[id]
+	_board.play_pickup_flash(snake.head_position, _elapsed, color)
+
+	if not crate:
+		Journal.info("game", "Player %d collected a speed bolt" % id)
+	elif roll == SnakeWorld.Item.SLOW:
+		Journal.info("game", "Player %d opened a crate: slow down, forced on the spot" % id)
+	else:
+		Journal.info("game", "Player %d opened a crate: speed boost, stored in the slot" % id)
+
+
+func _on_match_finished(winner: int) -> void:
+	_winner_id = winner
+	if Session.is_host():
+		_match_over.rpc(winner)
+	_show_result(winner)
+
+
+func _show_result(winner: int) -> void:
+	spectating = false
+	_camera.stop_spectating()
+	_set_state(State.GAMEOVER)
+	_held_turns.clear()
+	_held_fly.clear()
+
+	if Session.is_online():
+		var mine := winner == Session.local_id()
+		var title := "VICTORY" if mine else "DEFEATED"
+		var color := GameConfig.SNAKE_HEAD_COLOR if mine else GameConfig.DANGER_COLOR
+		var subtitle := (
+			"last one standing" if mine
+			else ("%s survived" % _player_name(winner) if winner > 0 else "nobody survived")
+		)
+		var snake = local_snake()
+		_hud.show_result(title, color, subtitle, snake.score if snake != null else 0)
+	else:
+		var snake = local_snake()
+		_hud.show_game_over(
+			"you hit a wall" if snake != null and not snake.is_inside(snake.death_position)
+			else "you bit yourself",
+			snake.score if snake != null else 0,
+			PlayerProfile.high_score(),
+			_last_record
+		)
+
+
+func _start_spectating(from: Vector2) -> void:
+	spectating = true
+	_held_turns.clear()
+	_camera.start_spectating(from, Vector2(game_match.width, game_match.height))
+	Journal.info("game", "You are out: free camera until the round ends")
+
+
+# --------------------------------------------------------------------------- #
+# Networking
+# --------------------------------------------------------------------------- #
+func _start_hosting() -> void:
+	if not Session.host():
+		_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), Session.last_error)
+		return
+	_enter_lobby()
+	if _driver != null:
+		_net_autostart = 6.0   # the network self-test starts on its own
+
+
+func _join_session(address: String) -> void:
+	if not Session.join(address):
+		_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), Session.last_error)
+		return
+	PlayerProfile.set_preference("address", address)
+	_enter_lobby()
+
+
+func _on_peer_joined(id: int) -> void:
+	if state == State.LOBBY:
+		_refresh_lobby()
+	if Session.is_host() and state == State.PLAY:
+		# Latecomers watch the round that is already running.
+		_start_round.rpc_id(id, game_match.snakes.keys(), true)
+
+
+func _on_peer_left(id: int) -> void:
+	game_match.remove_snake(id)
+	if state == State.LOBBY:
+		_refresh_lobby()
+
+
+func _on_connected_to_host() -> void:
+	_refresh_lobby()
+
+
+func _on_connection_failed() -> void:
+	Journal.warn("game", "Could not join: %s" % Session.last_error)
+	_enter_menu(Session.last_error)
+
+
+func _on_host_disconnected() -> void:
+	game_match.snakes.clear()
+	_enter_menu("the host closed the session")
+
+
+## Host: build the match and tell everyone to start.
+func _start_match() -> void:
+	if not Session.is_host():
+		return
+	game_match.snakes.clear()
+	for id: int in Session.players:
+		game_match.add_snake(id)
+	_start_round.rpc(game_match.snakes.keys(), false)
+	_begin_round(game_match.snakes.keys(), false)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _start_round(ids: Array, as_spectator: bool) -> void:
+	_begin_round(ids, as_spectator)
+
+
+func _begin_round(ids: Array, as_spectator: bool) -> void:
+	# Only a network client mirrors somebody else's match. Offline and host
+	# both judge their own, which is what solo has always done.
+	if Session.role == Session.Role.CLIENT:
+		game_match.snakes.clear()
+		for id in ids:
+			game_match.add_snake(int(id))
+		game_match.authoritative = false
+	else:
+		game_match.authoritative = true
+	game_match.start()
+
+	_accumulator = 0.0
+	_flash = 0.0
+	_play_time = 0.0
+	_winner_id = -1
+	_held_turns.clear()
+	_held_fly.clear()
+	_was_affected = false
+	spectating = as_spectator
+	if as_spectator:
+		_camera.start_spectating(
+			Vector2(game_match.width, game_match.height) * 0.5,
+			Vector2(game_match.width, game_match.height)
+		)
+	else:
+		_camera.stop_spectating()
+		_camera.set_preview(false)
+		_camera.reset()
+	_hud.hide_overlay()
+	_hud.set_bar_visible(true)
+	_set_state(State.PLAY)
+	Journal.info("game", "Round started with %d snake(s)" % game_match.snakes.size())
+
+
+## Client to host: my steering for this step.
+@rpc("any_peer", "call_remote", "unreliable_ordered")
+func _send_input(turn: float) -> void:
+	if not Session.is_host():
+		return
+	var id := multiplayer.get_remote_sender_id()
+	var snake = game_match.snakes.get(id)
+	if snake != null and snake.alive:
+		snake.steer(turn)
+
+
+## Client to host: fire whatever I am carrying.
+@rpc("any_peer", "call_remote", "reliable")
+func _request_item() -> void:
+	if not Session.is_host():
+		return
+	var id := multiplayer.get_remote_sender_id()
+	var snake = game_match.snakes.get(id)
+	if snake != null and snake.alive and snake.use_item():
+		Journal.info("game", "Player %d fired an item" % id)
+
+
+func _broadcast_snapshot(delta: float) -> void:
+	_snapshot_timer -= delta
+	if _snapshot_timer > 0.0:
+		return
+	_snapshot_timer = 1.0 / SNAPSHOT_HZ
+
+	var snakes: Dictionary = {}
+	for id: int in game_match.snakes:
+		var snake: SnakeWorld = game_match.snakes[id]
+		snakes[id] = [
+			snake.head_position, snake.heading, snake.body_length,
+			snake.speed_multiplier, int(snake.effect), snake.alive, snake.score,
+			int(snake.carried), snake.effect_time_left,
+		]
+	var ground: Array = []
+	for item: Dictionary in game_match.ground:
+		ground.append([int(item["kind"]), item["position"]])
+	_apply_snapshot.rpc(snakes, game_match.food, ground)
+
+
+@rpc("authority", "call_remote", "unreliable")
+func _apply_snapshot(snakes: Dictionary, food: Vector2, ground: Array) -> void:
+	game_match.food = food
+	game_match.ground = []
+	for entry: Array in ground:
+		game_match.ground.append({"kind": entry[0], "position": entry[1]})
+
+	for id_key in snakes:
+		var id := int(id_key)
+		var row: Array = snakes[id_key]
+		var snake = game_match.snakes.get(id)
+		if snake == null:
+			snake = game_match.add_snake(id)
+		var was_alive: bool = snake.alive
+		snake.apply_snapshot(row[0], row[1], row[2], row[3], row[4], row[5], row[6])
+		snake.carried = row[7]
+		snake.effect_time_left = row[8]
+		if was_alive and not snake.alive and id == Session.local_id():
+			_on_local_death(snake)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _match_over(winner: int) -> void:
+	_winner_id = winner
+	_show_result(winner)
 
 
 # --------------------------------------------------------------------------- #
@@ -234,29 +553,48 @@ func _set_state(next_state: State) -> void:
 	state = next_state
 
 
-func _enter_menu() -> void:
+func _enter_menu(message: String = "") -> void:
+	Session.leave()
+	game_match.snakes.clear()
+	game_match.authoritative = true
 	_set_state(State.MENU)
+	spectating = false
+	_camera.stop_spectating()
 	_held_turns.clear()
+	_held_fly.clear()
 	_hud.set_bar_visible(false)
 	_camera.set_preview(true)
-	_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played())
+	_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), message)
 
 
-func _start_game() -> void:
-	world.reset()
-	_accumulator = 0.0
-	_flash = 0.0
-	_play_time = 0.0
-	_held_turns.clear()
-	_was_affected = false
-	_camera.set_preview(false)
-	_camera.reset()
-	_hud.hide_overlay()
-	_hud.set_bar_visible(true)
-	_set_state(State.PLAY)
+func _enter_lobby() -> void:
+	_set_state(State.LOBBY)
+	_hud.set_bar_visible(false)
+	_camera.set_preview(true)
+	_refresh_lobby()
+
+
+func _refresh_lobby() -> void:
+	if state != State.LOBBY:
+		return
+	_hud.show_lobby(
+		Session.is_host(),
+		Session.players.size(),
+		Session.local_addresses() if Session.is_host() else ""
+	)
+
+
+## Solo: one snake, the rules unchanged.
+func _start_solo() -> void:
+	game_match.snakes.clear()
+	game_match.authoritative = true
+	game_match.add_snake(Session.local_id())
+	_begin_round(game_match.snakes.keys(), false)
 
 
 func _toggle_pause() -> void:
+	if Session.is_online():
+		return    # pausing would stop the round for everybody else
 	if state == State.PLAY:
 		_set_state(State.PAUSE)
 		_held_turns.clear()
@@ -266,40 +604,25 @@ func _toggle_pause() -> void:
 		_set_state(State.PLAY)
 
 
-func _game_over(outcome: SnakeWorld.Outcome) -> void:
-	var score := world.score
-	_last_record = PlayerProfile.record_game(score)
-	stats["last_score"] = score
-	stats["max_score"] = maxi(int(stats["max_score"]), score)
-	stats["games"] = int(stats["games"]) + 1
-	Journal.info("game", "Game over (%s) at (%.1f,%.1f): score=%d body=%.1f travelled=%.1f record=%s" % [
-		"wall" if outcome == SnakeWorld.Outcome.DEAD_WALL else "self",
-		world.death_position.x, world.death_position.y,
-		score, world.body_length, world.distance_travelled, _last_record,
-	])
-
-	_set_state(State.GAMEOVER)
-	_held_turns.clear()
-	_hud.show_game_over(
-		"you hit a wall" if outcome == SnakeWorld.Outcome.DEAD_WALL else "you bit yourself",
-		score,
-		PlayerProfile.high_score(),
-		_last_record
-	)
-
-
 # --------------------------------------------------------------------------- #
 # Input
 # --------------------------------------------------------------------------- #
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return
+	var key_event := event as InputEventKey
+	if key_event.echo:
+		return
 	# A keystroke left over from whatever launched the game would otherwise
 	# skip the menu before the player has seen it.
 	if _elapsed < STARTUP_INPUT_DELAY:
 		return
-	var key_event := event as InputEventKey
-	if key_event.echo:
+
+	if state == State.PLAY and spectating and FLY_KEYS.has(key_event.keycode):
+		if key_event.pressed:
+			_held_fly[key_event.keycode] = FLY_KEYS[key_event.keycode]
+		else:
+			_held_fly.erase(key_event.keycode)
 		return
 
 	# Turning is held down, so releases matter as much as presses.
@@ -317,10 +640,19 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_key(keycode: int) -> void:
 	match state:
 		State.MENU:
-			if keycode == KEY_ENTER or keycode == KEY_KP_ENTER or keycode == KEY_SPACE:
-				_start_game()
+			if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
+				_start_solo()
+			elif keycode == KEY_H:
+				_start_hosting()
+			elif keycode == KEY_J:
+				_join_session(str(PlayerProfile.get_preference("address")))
 			elif keycode == KEY_ESCAPE:
 				request_quit("menu-quit")
+		State.LOBBY:
+			if keycode == KEY_ENTER and Session.is_host():
+				_start_match()
+			elif keycode == KEY_ESCAPE:
+				_enter_menu()
 		State.PLAY:
 			_play_key(keycode)
 		State.PAUSE:
@@ -330,8 +662,13 @@ func _on_key(keycode: int) -> void:
 				_enter_menu()
 		State.GAMEOVER:
 			if keycode == KEY_R or keycode == KEY_ENTER or keycode == KEY_SPACE:
-				Journal.info("game", "Round restarted")
-				_start_game()
+				if Session.is_host():
+					_start_match()
+				elif Session.is_online():
+					_enter_lobby()
+				else:
+					Journal.info("game", "Round restarted")
+					_start_solo()
 			elif keycode == KEY_M:
 				_enter_menu()
 			elif keycode == KEY_ESCAPE:
@@ -356,16 +693,30 @@ func _play_key(keycode: int) -> void:
 ## Demo mode doubles as a showroom: drop items where you want them.
 func _demo_key(keycode: int) -> void:
 	if keycode == KEY_B:
-		world.spawn_pickup_now()
+		game_match.drop(SnakeWorld.Ground.BOLT)
 		Journal.info("game", "Demo: a bolt dropped on request")
 	elif keycode == KEY_N:
 		_demo_crate_bonus = not _demo_crate_bonus
-		world.spawn_mystery_now(
+		game_match.drop(
+			SnakeWorld.Ground.MYSTERY,
 			SnakeWorld.Item.SPEED if _demo_crate_bonus else SnakeWorld.Item.SLOW
 		)
 		Journal.info("game", "Demo: a crate dropped, rigged with %s" % [
 			"a bonus" if _demo_crate_bonus else "the curse",
 		])
+
+
+func _use_item() -> void:
+	var snake = local_snake()
+	if snake == null or not snake.alive:
+		return
+	if Session.role == Session.Role.CLIENT:
+		_request_item.rpc_id(1)
+		return
+	if not snake.use_item():
+		Journal.debug("game", "Space pressed with an empty item slot")
+		return
+	Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
 
 
 func _cycle_camera() -> void:
@@ -408,16 +759,8 @@ func request_quit(reason: String) -> void:
 		for failure: String in failures:
 			Journal.error("selftest", "check failed: %s" % failure)
 		exit_code = 0 if failures.is_empty() else 1
-		Journal.info("selftest", "SELFTEST %s: states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
-			"PASS" if failures.is_empty() else "FAIL",
-			str(_driver.states_seen.keys()),
-			str(_driver.views_seen.keys()),
-			str(_driver.cameras_seen.keys()),
-			str(_driver.turns_seen.keys()),
-			_driver.max_multiplier, _driver.multiplier_after_boost,
-			_driver.min_multiplier, _driver.multiplier_after_slow,
-			_driver.crate_bonus_in_slot, _driver.crate_malus_forced,
-			stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
+		Journal.info("selftest", "SELFTEST %s: %s" % [
+			"PASS" if failures.is_empty() else "FAIL", _driver.summary(self),
 		])
 
 	Journal.info("game", "Session finished: reason=%s games=%d best=%d steps=%d frames=%d fps=%.1f slow=%d errors=%s" % [
@@ -425,6 +768,7 @@ func request_quit(reason: String) -> void:
 		stats["frames"], stats["fps"], stats["slow_frames"],
 		"none" if stats["errors"].is_empty() else str(stats["errors"]),
 	])
+	Session.leave()
 	get_tree().quit(exit_code)
 
 

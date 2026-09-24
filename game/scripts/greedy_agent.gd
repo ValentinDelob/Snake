@@ -12,7 +12,15 @@ const FEELER_ANGLE := 0.55        # radians between the side feelers
 const ALIGNED_ENOUGH := 0.08      # radians: stop correcting below this
 
 
+var _match: SnakeMatch = null
+
+
 ## Returns the turn to apply: -1 left, 0 straight, +1 right.
+func decide_in(game_match: SnakeMatch, world: SnakeWorld) -> float:
+	_match = game_match
+	return decide(world)
+
+
 func decide(world: SnakeWorld) -> float:
 	var escape := _avoid(world)
 	if escape != 0.0:
@@ -28,19 +36,22 @@ func decide(world: SnakeWorld) -> float:
 ## A bolt or a crate is worth a detour, but not a long one. The bot takes
 ## the gamble on crates: it cannot know what is inside either.
 func _target(world: SnakeWorld) -> Vector2:
-	var best := world.food
-	var best_distance := world.head_position.distance_to(world.food) * 1.6
+	if _match == null:
+		return world.head_position + world.direction() * 10.0
 
-	if world.carried == SnakeWorld.Item.NONE and world.has_ground(SnakeWorld.Ground.BOLT):
-		var bolt := world.ground_position(SnakeWorld.Ground.BOLT)
-		var distance := world.head_position.distance_to(bolt)
+	var best: Vector2 = _match.food
+	var best_distance: float = world.head_position.distance_to(_match.food) * 1.6
+
+	if world.carried == SnakeWorld.Item.NONE and _match.has_ground(SnakeWorld.Ground.BOLT):
+		var bolt: Vector2 = _match.ground_position(SnakeWorld.Ground.BOLT)
+		var distance: float = world.head_position.distance_to(bolt)
 		if distance < best_distance:
 			best = bolt
 			best_distance = distance
 
-	if world.has_ground(SnakeWorld.Ground.MYSTERY):
-		var crate := world.ground_position(SnakeWorld.Ground.MYSTERY)
-		var distance := world.head_position.distance_to(crate)
+	if _match.has_ground(SnakeWorld.Ground.MYSTERY):
+		var crate: Vector2 = _match.ground_position(SnakeWorld.Ground.MYSTERY)
+		var distance: float = world.head_position.distance_to(crate)
 		if distance < best_distance:
 			best = crate
 
@@ -78,6 +89,12 @@ func _blocked(world: SnakeWorld, angle_offset: float, distance: float) -> bool:
 			return true
 		if world.hits_body(point):
 			return true
+		# Another snake is every bit as solid as your own tail.
+		if _match != null:
+			for id: int in _match.snakes:
+				var other: SnakeWorld = _match.snakes[id]
+				if other != world and other.alive and other.hits_body(point, 0.0):
+					return true
 	return false
 
 

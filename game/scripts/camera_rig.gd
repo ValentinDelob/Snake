@@ -18,6 +18,9 @@ var flat := false
 var _eye := Vector3.ZERO
 var _look := Vector3.ZERO
 var _settled := false
+var _spectating := false
+var _height := 14.0
+var _arena := Vector2(30.0, 20.0)
 ## The menu shows the whole board whatever the player's own preference is.
 var _preview := false
 
@@ -58,14 +61,76 @@ func reset() -> void:
 	_settled = false
 
 
-func update_rig(delta: float, world: SnakeWorld) -> void:
+## Free flight for a player who is out of the round: the camera moves
+## anywhere inside the arena instead of following a snake.
+func fly(delta: float, move: Vector2, lift: float, arena: Vector2) -> void:
+	_spectating = true
+	_settled = true
+	var speed := 12.0
+	_look += Vector3(move.x, 0.0, move.y) * speed * delta
+	_look.x = clampf(_look.x, 0.0, arena.x)
+	_look.z = clampf(_look.z, 0.0, arena.y)
+	_height = clampf(_height + lift * speed * 0.6 * delta, 6.0, 30.0)
+	_eye = _look + Vector3(0.0, _height, _height * 0.55)
+	projection = PROJECTION_PERSPECTIVE
+	fov = MODE_FOV[Mode.OVERVIEW]
+	look_at_from_position(_eye, _look, Vector3.UP)
+
+
+func start_spectating(from: Vector2, arena: Vector2) -> void:
+	_spectating = true
+	_settled = true
+	_height = 14.0
+	_look = Vector3(
+		clampf(from.x, 0.0, arena.x), 0.0, clampf(from.y, 0.0, arena.y)
+	)
+	_eye = _look + Vector3(0.0, _height, _height * 0.55)
+
+
+func stop_spectating() -> void:
+	_spectating = false
+	_settled = false
+
+
+func spectating() -> bool:
+	return _spectating
+
+
+## The menu and the lobby have no snake to follow: the camera still has to
+## sit somewhere sensible, or it ends up at the origin inside the scenery.
+func set_arena(arena_width: float, arena_height: float) -> void:
+	_arena = Vector2(arena_width, arena_height)
+
+
+func show_arena(delta: float) -> void:
+	projection = PROJECTION_PERSPECTIVE
+	fov = MODE_FOV[Mode.OVERVIEW]
+	var centre := Vector3(_arena.x * 0.5, 0.0, _arena.y * 0.5)
+	var wanted := centre + Vector3(0.0, 22.0, 15.0)
+	if not _settled:
+		_eye = wanted
+		_look = centre
+		_settled = true
+	else:
+		var weight := 1.0 - exp(-delta * 4.0)
+		_eye = _eye.lerp(wanted, weight)
+		_look = _look.lerp(centre, weight)
+	look_at_from_position(_eye, _look, Vector3.UP)
+
+
+func update_rig(delta: float, world) -> void:
+	if _spectating:
+		return
+	if world == null:
+		show_arena(delta)
+		return
 	if flat and not _preview:
 		_apply_flat(world)
 		return
 
 	projection = PROJECTION_PERSPECTIVE
 	# A wider lens while boosting: cheap, and it sells the speed.
-	var boost_fov := 7.0 * (world.speed_multiplier - 1.0)
+	var boost_fov: float = 7.0 * (world.speed_multiplier - 1.0)
 	fov = (MODE_FOV[Mode.OVERVIEW] if _preview else MODE_FOV[mode]) + boost_fov
 
 	var pose := _desired_pose(world)

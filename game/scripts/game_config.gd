@@ -76,6 +76,20 @@ const MYSTERY_COLOR := Color(0.72, 0.45, 1.0)
 const FROST_COLOR := Color(0.48, 0.78, 1.0)
 const FROST_PALE_COLOR := Color(0.85, 0.95, 1.0)
 
+## One palette per player: head, body, tail. The first is always yours.
+const PLAYER_PALETTES := [
+	[Color(0.47, 1.0, 0.59), Color(0.0, 0.78, 0.35), Color(0.0, 0.33, 0.18)],
+	[Color(0.55, 0.86, 1.0), Color(0.12, 0.52, 0.95), Color(0.05, 0.2, 0.48)],
+	[Color(1.0, 0.78, 0.45), Color(0.95, 0.5, 0.12), Color(0.45, 0.19, 0.03)],
+	[Color(1.0, 0.62, 0.95), Color(0.83, 0.2, 0.7), Color(0.38, 0.06, 0.32)],
+	[Color(0.85, 0.95, 0.5), Color(0.55, 0.78, 0.1), Color(0.22, 0.33, 0.03)],
+]
+
+
+static func palette_for(index: int) -> Array:
+	return PLAYER_PALETTES[index % PLAYER_PALETTES.size()]
+
+
 const ACCENT_COLOR := Color(1.0, 0.82, 0.31)
 const DANGER_COLOR := Color(1.0, 0.35, 0.35)
 const TEXT_COLOR := Color(0.93, 0.94, 0.96)

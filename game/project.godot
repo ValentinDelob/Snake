@@ -16,6 +16,7 @@ config/icon="res://icon.svg"
 
 Journal="*res://scripts/journal.gd"
 PlayerProfile="*res://scripts/profile_store.gd"
+Session="*res://scripts/net/session.gd"
 
 [debug]
 

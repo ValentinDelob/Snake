@@ -1,40 +1,38 @@
 class_name SelfTestDriver
 extends RefCounted
 
-## Scripted player driving a real, windowed run through every screen, every
-## camera, both turn directions and the speed boost, so a build can be
-## validated without a human at the keyboard.
+## Scripted player driving a real, windowed run so a build can be validated
+## without a human at the keyboard.
 ##
-## Injected key events go through the normal input pipeline, which means the
-## test exercises the same code path as a player - including holding a turn
-## key down and firing the item with space.
+## Two scripts live here. The solo one walks every screen, every camera, both
+## turn directions, the boost and both faces of the crate. The network one
+## runs when the game was started with --host or --join: it waits for the
+## other machine, plays the round out and checks that the last survivor wins
+## and that the loser ends up watching.
 ##
-## The run is a list of phases rather than absolute times: if the snake dies
-## halfway through, the driver retries and picks the phase back up.
+## Injected key events go through the normal input pipeline, so the test
+## exercises the same code path as a player.
 
 enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, PAUSE, FINISH }
 
 const PAUSE_FRAMES := 30
 const MIN_ACCEPTABLE_FPS := 25.0
-const TURN_HOLD := 0.7          # seconds a turn key stays down
-const SPACING_TOLERANCE := 0.25 # relative error allowed between body segments
+const TURN_HOLD := 0.7
+const SPACING_TOLERANCE := 0.25
 const MAX_RETRIES := 6
+const TURN_ROOM := 6.0
+const TURN_ROOM_TIMEOUT := 8.0
 ## Godot writes its own errors into the same log file, so the test can read
 ## them back. A looping tween on a freed panel once shipped exactly because
 ## nothing here was watching for engine errors.
 const LOG_PATH := "user://logs/snake.log"
-const TURN_ROOM := 6.0            # world units of clearance wanted for the test
-const TURN_ROOM_TIMEOUT := 8.0    # ... but do not wait forever
 
 ## seconds into the camera phase -> key pressed once
 var camera_schedule := {
-	0.8: KEY_C,   # follow -> overview
-	1.6: KEY_C,   # overview -> chase
-	2.4: KEY_C,   # chase -> follow (wraps around)
-	3.2: KEY_V,   # 3D -> flat top-down view
-	4.0: KEY_V,   # back to 3D
+	0.8: KEY_C, 1.6: KEY_C, 2.4: KEY_C, 3.2: KEY_V, 4.0: KEY_V,
 }
 
+var network := false
 var states_seen := {}
 var views_seen := {}
 var cameras_seen := {}
@@ -46,12 +44,19 @@ var pickup_flash_seen := false
 var boost_fired := false
 var max_multiplier := 1.0
 var multiplier_after_boost := -1.0
-
-## The crate: a bonus goes to the slot, a curse is swallowed on the spot.
 var crate_bonus_in_slot := false
 var crate_malus_forced := false
 var min_multiplier := 1.0
 var multiplier_after_slow := -1.0
+
+# network run
+var peers_seen := 0
+var remote_moved := false
+var round_started := false
+var match_finished := false
+var winner_id := -1
+var spectated := false
+var died_locally := false
 
 var _phase_started := 0.0
 var _done_marks := {}
@@ -59,29 +64,22 @@ var _entered_play := false
 var _pause_frames := 0
 var _retries := 0
 var _finished := false
-
-# manual steering test
-var _turn_phase := 0            # 0 waiting, 1 left held, 2 right held, 3 done
+var _turn_phase := 0
 var _turn_started := 0.0
 var _turn_waiting_since := -1.0
 var _heading_before := 0.0
 var _saved_agent: GreedyAgent = null
-
-# boost test
 var _bolt_requested := false
 var _boost_fired_at := 0.0
-
-# crate tests
 var _bonus_crate_requested := false
 var _malus_crate_requested := false
 var _slow_started_at := -1.0
-
-## True once the body has been caught mid-growth, which is what proves the
-## snake lengthens progressively instead of jumping to its new size.
 var _growth_observed := false
 var _spacing_checks := 0
 var _spacing_errors := 0
 var _next_spacing_check := 0.5
+var _remote_first_seen := {}
+var _release_at := -1.0
 
 
 static func press(keycode: int) -> void:
@@ -106,6 +104,11 @@ func on_frame(game) -> void:
 		Journal.info("selftest", "reached state: %s" % state_name)
 		states_seen[state_name] = true
 
+	if network or Session.is_online():
+		network = true
+		_network_frame(game)
+		return
+
 	match state_name:
 		"menu":
 			_on_menu(game)
@@ -117,6 +120,58 @@ func on_frame(game) -> void:
 			_on_gameover(game)
 
 
+# --------------------------------------------------------------------------- #
+# The network script
+# --------------------------------------------------------------------------- #
+func _network_frame(game) -> void:
+	peers_seen = maxi(peers_seen, Session.players.size())
+	var state_name: String = game.state_name()
+
+	if state_name == "play":
+		round_started = true
+		_watch_remotes(game)
+		if game.spectating:
+			spectated = true
+		var mine = game.local_snake()
+		if mine != null and not mine.alive:
+			died_locally = true
+
+		# Whoever is told to let go first loses: that is how the test gets a
+		# winner without two machines fighting over it.
+		if _release_at < 0.0:
+			var fallback: float = 20.0 if Session.is_host() else 45.0
+			_release_at = game.play_time() + (
+				game.lose_after if game.lose_after > 0.0 else fallback
+			)
+		elif game.agent != null and game.play_time() >= _release_at:
+			Journal.info("selftest", "letting go of the wheel to settle the round")
+			game.agent = null
+
+	elif state_name == "gameover":
+		if not _finished:
+			match_finished = true
+			winner_id = game._winner_id
+			Journal.info("selftest", "round over, winner is %d" % winner_id)
+			_finished = true
+			press(KEY_ESCAPE)
+
+
+func _watch_remotes(game) -> void:
+	for id: int in game.game_match.snakes:
+		if id == Session.local_id():
+			continue
+		var snake: SnakeWorld = game.game_match.snakes[id]
+		if not _remote_first_seen.has(id):
+			_remote_first_seen[id] = snake.head_position
+			Journal.info("selftest", "remote snake %d is on the arena" % id)
+		elif not remote_moved and _remote_first_seen[id].distance_to(snake.head_position) > 2.0:
+			remote_moved = true
+			Journal.info("selftest", "remote snake %d is moving: snapshots are flowing" % id)
+
+
+# --------------------------------------------------------------------------- #
+# The solo script
+# --------------------------------------------------------------------------- #
 func _on_menu(game) -> void:
 	if not _entered_play and game.stats["frames"] > 30:
 		Journal.info("selftest", "starting a game from the menu")
@@ -131,7 +186,7 @@ func _on_play(game) -> void:
 	cameras_seen[rig.mode_name()] = true
 
 	var now: float = game.play_time()
-	if now < _phase_started:      # a new round started, play time went back to 0
+	if now < _phase_started:
 		_phase_started = 0.0
 		_on_round_restart(game)
 	_watch_world(game, now)
@@ -168,8 +223,6 @@ func _on_round_restart(game) -> void:
 		_turn_phase = 0
 		_turn_waiting_since = -1.0
 	if phase == Phase.BOOST and multiplier_after_boost < 0.0:
-		# The boost never ran its course (dying at twice the speed is easy):
-		# drop another bolt and do it again rather than accept a half ramp.
 		_bolt_requested = false
 		boost_fired = false
 	if phase == Phase.CRATE_BONUS and not crate_bonus_in_slot:
@@ -185,7 +238,6 @@ func _enter_phase(next_phase: Phase, now: float) -> void:
 	Journal.info("selftest", "phase -> %s" % Phase.keys()[next_phase])
 
 
-# --------------------------------------------------------------------------- #
 func _run_cameras(now: float) -> void:
 	var since := now - _phase_started
 	for mark: float in camera_schedule:
@@ -205,7 +257,7 @@ func _run_turns(game, now: float) -> void:
 		0:
 			# Steering by hand means no bot: wait for open space first, so the
 			# test is not spent crashing into the nearest wall.
-			if not _has_room(game.world):
+			if not _has_room(game.local_snake()):
 				if _turn_waiting_since < 0.0:
 					_turn_waiting_since = now
 				elif now - _turn_waiting_since < TURN_ROOM_TIMEOUT:
@@ -213,7 +265,7 @@ func _run_turns(game, now: float) -> void:
 			Journal.info("selftest", "manual steering test: holding LEFT")
 			_saved_agent = game.agent
 			game.agent = null
-			_heading_before = game.world.heading
+			_heading_before = game.local_snake().heading
 			_turn_started = now
 			_turn_phase = 1
 			press(KEY_LEFT)
@@ -222,7 +274,7 @@ func _run_turns(game, now: float) -> void:
 				release(KEY_LEFT)
 				_record_turn(game, "left", -1.0)
 				Journal.info("selftest", "manual steering test: holding RIGHT")
-				_heading_before = game.world.heading
+				_heading_before = game.local_snake().heading
 				_turn_started = now
 				_turn_phase = 2
 				press(KEY_RIGHT)
@@ -237,27 +289,27 @@ func _run_turns(game, now: float) -> void:
 
 ## Drop a bolt, let the bot fetch it, fire it and watch the speed ramp.
 func _run_boost(game, now: float) -> void:
-	var world: SnakeWorld = game.world
-
+	var snake = game.local_snake()
 	if not _bolt_requested:
-		Journal.info("selftest", "dropping a speed bolt on the arena")
-		world.spawn_pickup_now()
+		Journal.info("selftest", "dropping a speed bolt in the snake's path")
+		game.game_match.drop_at(SnakeWorld.Ground.BOLT, _ahead_of(snake))
 		_bolt_requested = true
 		return
 
 	if not boost_fired:
-		if world.carried != SnakeWorld.Item.NONE:
+		if snake.carried != SnakeWorld.Item.NONE:
 			Journal.info("selftest", "bolt in the slot, firing it with SPACE")
 			boost_fired = true
 			_boost_fired_at = now
 			press(KEY_SPACE)
 			release(KEY_SPACE)
-		elif not world.has_ground(SnakeWorld.Ground.BOLT):
-			_bolt_requested = false   # the round restarted: drop another one
+		elif now - _phase_started > 8.0:
+			_bolt_requested = false
+			_phase_started = now
 		return
 
 	if now - _boost_fired_at >= GameConfig.BOOST_DURATION + GameConfig.BOOST_RAMP_DOWN + 0.5:
-		multiplier_after_boost = world.speed_multiplier
+		multiplier_after_boost = snake.speed_multiplier
 		Journal.info("selftest", "boost finished: peak x%.2f, back to x%.2f" % [
 			max_multiplier, multiplier_after_boost,
 		])
@@ -266,45 +318,48 @@ func _run_boost(game, now: float) -> void:
 
 ## A crate rigged to hold a bonus: it must land in the slot, not fire itself.
 func _run_crate_bonus(game, now: float) -> void:
-	var world: SnakeWorld = game.world
+	var snake = game.local_snake()
 	if not _bonus_crate_requested:
-		Journal.info("selftest", "dropping a crate rigged with a bonus")
-		world.spawn_mystery_now(SnakeWorld.Item.SPEED)
+		Journal.info("selftest", "dropping a crate rigged with a bonus in the path")
+		game.game_match.drop_at(
+			SnakeWorld.Ground.MYSTERY, _ahead_of(snake), SnakeWorld.Item.SPEED
+		)
 		_bonus_crate_requested = true
+		_phase_started = now
 		return
 
-	if (
-		world.last_pickup_kind == SnakeWorld.Ground.MYSTERY
-		and world.last_roll == SnakeWorld.Item.SPEED
-		and world.carried == SnakeWorld.Item.SPEED
-	):
+	if snake.carried == SnakeWorld.Item.SPEED:
 		crate_bonus_in_slot = true
 		Journal.info("selftest", "crate bonus went to the slot, as it should")
 		_enter_phase(Phase.CRATE_MALUS, now)
-	elif not world.has_ground(SnakeWorld.Ground.MYSTERY):
-		_bonus_crate_requested = false    # the round restarted: try again
+	elif now - _phase_started > 8.0:
+		# The snake wandered off: lay another one right in front of it.
+		_bonus_crate_requested = false
 
 
 ## A crate rigged to hold the curse: it must apply itself, with no choice.
 func _run_crate_malus(game, now: float) -> void:
-	var world: SnakeWorld = game.world
+	var snake = game.local_snake()
 	if not _malus_crate_requested:
-		Journal.info("selftest", "dropping a crate rigged with the slow down")
-		world.spawn_mystery_now(SnakeWorld.Item.SLOW)
+		Journal.info("selftest", "dropping a crate rigged with the slow down in the path")
+		game.game_match.drop_at(
+			SnakeWorld.Ground.MYSTERY, _ahead_of(snake), SnakeWorld.Item.SLOW
+		)
 		_malus_crate_requested = true
+		_phase_started = now
 		return
 
 	if _slow_started_at < 0.0:
-		if world.effect == SnakeWorld.Item.SLOW:
+		if snake.effect == SnakeWorld.Item.SLOW:
 			crate_malus_forced = true
 			_slow_started_at = now
 			Journal.info("selftest", "crate curse forced itself on the snake")
-		elif not world.has_ground(SnakeWorld.Ground.MYSTERY):
+		elif now - _phase_started > 8.0:
 			_malus_crate_requested = false
 		return
 
 	if now - _slow_started_at >= GameConfig.SLOW_DURATION + GameConfig.SLOW_RAMP_UP + 0.5:
-		multiplier_after_slow = world.speed_multiplier
+		multiplier_after_slow = snake.speed_multiplier
 		Journal.info("selftest", "slow down finished: floor x%.2f, back to x%.2f" % [
 			min_multiplier, multiplier_after_slow,
 		])
@@ -318,36 +373,45 @@ func _run_pause() -> void:
 
 
 func _watch_world(game, now: float) -> void:
-	var world: SnakeWorld = game.world
-	if world.carried != SnakeWorld.Item.NONE and not boost_collected:
-		Journal.info("selftest", "speed bolt collected")
+	var snake = game.local_snake()
+	if snake == null:
+		return
+	if snake.carried != SnakeWorld.Item.NONE and not boost_collected:
+		Journal.info("selftest", "an item reached the slot")
 		boost_collected = true
 	if boost_collected and not pickup_flash_seen and game.board_view().flash_active():
 		Journal.info("selftest", "pickup effect playing")
 		pickup_flash_seen = true
-	max_multiplier = maxf(max_multiplier, world.speed_multiplier)
-	min_multiplier = minf(min_multiplier, world.speed_multiplier)
+	max_multiplier = maxf(max_multiplier, snake.speed_multiplier)
+	min_multiplier = minf(min_multiplier, snake.speed_multiplier)
 
-	if world.body_length < world.target_body_length - 0.01:
+	if snake.body_length < snake.target_body_length - 0.01:
 		if not _growth_observed:
 			Journal.info("selftest", "growth caught in progress: %.2f of %.2f units" % [
-				world.body_length, world.target_body_length,
+				snake.body_length, snake.target_body_length,
 			])
 		_growth_observed = true
-	_check_body_spacing(game, now)
+	_check_body_spacing(snake, now)
+
+
+## A spot a few units in front of the snake: whatever is put there will be
+## driven over within a second or two.
+func _ahead_of(snake) -> Vector2:
+	return snake.head_position + snake.direction() * 3.5
 
 
 ## Is the head far enough from every wall to turn freely?
-func _has_room(world: SnakeWorld) -> bool:
-	var head: Vector2 = world.head_position
+func _has_room(snake) -> bool:
+	if snake == null:
+		return false
 	return (
-		head.x > TURN_ROOM and head.x < world.width - TURN_ROOM
-		and head.y > TURN_ROOM and head.y < world.height - TURN_ROOM
+		snake.head_position.x > TURN_ROOM and snake.head_position.x < snake.width - TURN_ROOM
+		and snake.head_position.y > TURN_ROOM and snake.head_position.y < snake.height - TURN_ROOM
 	)
 
 
 func _record_turn(game, label: String, expected_sign: float) -> void:
-	var delta := wrapf(game.world.heading - _heading_before, -PI, PI)
+	var delta := wrapf(game.local_snake().heading - _heading_before, -PI, PI)
 	if signf(delta) == expected_sign and absf(delta) > 0.5:
 		turns_seen[label] = true
 		Journal.info("selftest", "turn %s confirmed: heading moved %.2f rad" % [label, delta])
@@ -357,12 +421,12 @@ func _record_turn(game, label: String, expected_sign: float) -> void:
 
 ## The body must trail the head at a constant spacing; a jump would mean the
 ## snake teleports instead of sliding.
-func _check_body_spacing(game, now: float) -> void:
+func _check_body_spacing(snake, now: float) -> void:
 	if now < _next_spacing_check:
 		return
 	_next_spacing_check = now + 1.0
 
-	var points: Array[Vector2] = game.world.body_points()
+	var points: Array[Vector2] = snake.body_points()
 	if points.size() < 3:
 		return
 	_spacing_checks += 1
@@ -388,23 +452,37 @@ func _on_pause(game) -> void:
 func _on_gameover(game) -> void:
 	if _finished:
 		return
-
 	if phase == Phase.FINISH and int(game.stats["games"]) >= 2:
 		Journal.info("selftest", "quitting from the game over screen")
 		_finished = true
 		press(KEY_ESCAPE)
 		return
-
 	if _retries >= MAX_RETRIES:
 		Journal.warn("selftest", "too many retries, stopping here")
 		_finished = true
 		press(KEY_ESCAPE)
 		return
-
 	_retries += 1
 	Journal.info("selftest", "retrying (round %d, phase %s)" % [_retries, Phase.keys()[phase]])
 	press(KEY_R)
 	release(KEY_R)
+
+
+# --------------------------------------------------------------------------- #
+func summary(game) -> String:
+	var stats: Dictionary = game.stats
+	if network:
+		return "network(%s) peers=%d remote_moved=%s winner=%d spectated=%s games=%d frames=%d fps=%.1f" % [
+			"host" if Session.is_host() else "client",
+			peers_seen, remote_moved, winner_id, spectated,
+			stats["games"], stats["frames"], stats["fps"],
+		]
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
+		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
+		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
+		stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
+	]
 
 
 ## Returns the list of failed expectations (empty means success).
@@ -412,6 +490,44 @@ func verify(game) -> Array:
 	var failures: Array = []
 	var stats: Dictionary = game.stats
 
+	if network:
+		failures.append_array(_verify_network())
+	else:
+		failures.append_array(_verify_solo(stats))
+
+	if float(stats["fps"]) < MIN_ACCEPTABLE_FPS:
+		failures.append("frame rate too low: %.1f fps" % float(stats["fps"]))
+	if not stats["errors"].is_empty():
+		failures.append("errors reported: %s" % str(stats["errors"]))
+	# Two instances of the game share one log file, so in a network run the
+	# lines of the other machine would be read as ours. The harness checks
+	# each process separately instead.
+	if not network:
+		var engine_errors := _engine_errors()
+		if not engine_errors.is_empty():
+			failures.append("engine errors logged: %s" % str(engine_errors.slice(0, 3)))
+	return failures
+
+
+func _verify_network() -> Array:
+	var failures: Array = []
+	if peers_seen < 2:
+		failures.append("never saw a second player (peers=%d)" % peers_seen)
+	if not round_started:
+		failures.append("the round never started")
+	if not remote_moved:
+		failures.append("the other snake never moved: no snapshots arrived")
+	if not match_finished:
+		failures.append("the round never ended")
+	elif winner_id <= 0:
+		failures.append("the round ended without a winner")
+	if died_locally and not spectated:
+		failures.append("dying did not put this player into the spectator camera")
+	return failures
+
+
+func _verify_solo(stats: Dictionary) -> Array:
+	var failures: Array = []
 	for state_name: String in ["menu", "play", "pause", "gameover"]:
 		if not states_seen.has(state_name):
 			failures.append("state never reached: %s" % state_name)
@@ -425,10 +541,17 @@ func verify(game) -> Array:
 		if not turns_seen.has(turn):
 			failures.append("holding %s never turned the snake" % turn)
 
-	if not boost_collected:
-		failures.append("the speed bolt was never collected")
 	if boost_collected and not pickup_flash_seen:
-		failures.append("collecting the bolt played no effect")
+		failures.append("collecting an item played no effect")
+	if not boost_fired:
+		failures.append("the speed boost was never fired")
+	elif max_multiplier < GameConfig.BOOST_FACTOR - 0.05:
+		failures.append("the boost only reached x%.2f" % max_multiplier)
+	elif multiplier_after_boost < 0.0:
+		failures.append("the boost never ran to completion")
+	elif multiplier_after_boost > 1.05:
+		failures.append("speed stayed at x%.2f after the boost" % multiplier_after_boost)
+
 	if not crate_bonus_in_slot:
 		failures.append("a crate bonus never reached the item slot")
 	if not crate_malus_forced:
@@ -440,15 +563,6 @@ func verify(game) -> Array:
 	elif absf(multiplier_after_slow - 1.0) > 0.05:
 		failures.append("speed stayed at x%.2f after the slow down" % multiplier_after_slow)
 
-	if not boost_fired:
-		failures.append("the speed boost was never fired")
-	elif max_multiplier < GameConfig.BOOST_FACTOR - 0.05:
-		failures.append("the boost only reached x%.2f" % max_multiplier)
-	elif multiplier_after_boost < 0.0:
-		failures.append("the boost never ran to completion")
-	elif multiplier_after_boost > 1.05:
-		failures.append("speed stayed at x%.2f after the boost" % multiplier_after_boost)
-
 	if _spacing_checks == 0:
 		failures.append("the body spacing was never checked")
 	if _spacing_errors > 0:
@@ -459,14 +573,6 @@ func verify(game) -> Array:
 		failures.append("the body jumped to its new length instead of growing into it")
 	if int(stats["games"]) < 2:
 		failures.append("expected 2 finished games, got %d" % int(stats["games"]))
-	if float(stats["fps"]) < MIN_ACCEPTABLE_FPS:
-		failures.append("frame rate too low: %.1f fps" % float(stats["fps"]))
-	if not stats["errors"].is_empty():
-		failures.append("errors reported: %s" % str(stats["errors"]))
-
-	var engine_errors := _engine_errors()
-	if not engine_errors.is_empty():
-		failures.append("engine errors logged: %s" % str(engine_errors.slice(0, 3)))
 	return failures
 
 

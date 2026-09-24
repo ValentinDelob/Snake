@@ -12,6 +12,7 @@ const DEFAULTS := {
 	"games_played": 0,
 	"view": "3d",
 	"camera": "follow",
+	"address": "127.0.0.1",
 }
 
 var data: Dictionary = DEFAULTS.duplicate()

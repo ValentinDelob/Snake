@@ -20,6 +20,8 @@ var _mode_chip: Label
 var _item_slot: ItemSlot
 var _item_hint: Control
 var _boost_label: Label
+var _players_box: VBoxContainer
+var _spectator_label: Label
 
 var _overlay: Control
 var _card: PanelContainer
@@ -140,6 +142,24 @@ func _build_top_bar() -> void:
 	_boost_label = _label("", 14, GameConfig.SPARK_COLOR)
 	item_column.add_child(_boost_label)
 
+	# Who else is in the round, and who is still alive
+	_players_box = VBoxContainer.new()
+	_players_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_players_box.offset_right = -22
+	_players_box.offset_top = 74
+	_players_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_players_box.alignment = BoxContainer.ALIGNMENT_END
+	_players_box.add_theme_constant_override("separation", 4)
+	_top_bar.add_child(_players_box)
+
+	_spectator_label = _label("", 16, GameConfig.FROST_COLOR)
+	_spectator_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_spectator_label.offset_top = -70
+	_spectator_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_spectator_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_spectator_label.visible = false
+	_top_bar.add_child(_spectator_label)
+
 
 func set_stats(score: int, best: int, mode_text: String) -> void:
 	if score != _shown_score:
@@ -167,6 +187,36 @@ func set_item(carried: int, effect: int, time_left: float, total: float) -> void
 	else:
 		_boost_label.text = "no item"
 		_boost_label.add_theme_color_override("font_color", GameConfig.DIM_COLOR)
+
+
+## One line per player while a match is on; hidden when playing solo.
+func set_players(rows: Array, local_id: int, spectating: bool) -> void:
+	_players_box.visible = rows.size() > 1
+	if _players_box.visible:
+		while _players_box.get_child_count() < rows.size():
+			_players_box.add_child(_label("", 15, GameConfig.TEXT_COLOR))
+		while _players_box.get_child_count() > rows.size():
+			var extra := _players_box.get_child(_players_box.get_child_count() - 1)
+			_players_box.remove_child(extra)
+			extra.queue_free()
+
+		for index in range(rows.size()):
+			var row: Dictionary = rows[index]
+			var label: Label = _players_box.get_child(index)
+			var palette: Array = GameConfig.palette_for(
+				0 if row["id"] == local_id else maxi(1, index)
+			)
+			# Peer ids are huge random numbers: nobody needs to read those.
+			var name_text: String = "you" if row["id"] == local_id else "player %d" % (index + 1)
+			label.text = "%s  %d%s" % [name_text, row["score"], "" if row["alive"] else "  out"]
+			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			label.add_theme_color_override(
+				"font_color", palette[0] if row["alive"] else GameConfig.DIM_COLOR
+			)
+
+	_spectator_label.visible = spectating
+	if spectating:
+		_spectator_label.text = "you are out - fly around with the arrow keys"
 
 
 func set_bar_visible(value: bool) -> void:
@@ -232,19 +282,62 @@ func _build_overlay() -> void:
 	card_box.add_child(_hints)
 
 
-func show_menu(best: int, games: int) -> void:
+func show_menu(best: int, games: int, message: String = "") -> void:
 	_title.text = "SNAKE 3D"
 	_title.add_theme_color_override("font_color", GameConfig.SNAKE_HEAD_COLOR)
-	_subtitle.text = "grab the bolt for speed - the crate is a gamble"
+	_subtitle.text = message if message != "" else "grab the bolt for speed - the crate is a gamble"
+	_subtitle.add_theme_color_override(
+		"font_color", GameConfig.DANGER_COLOR if message != "" else GameConfig.TEXT_COLOR
+	)
 	_set_chips([
 		["BEST", str(best), GameConfig.ACCENT_COLOR],
 		["GAMES", str(games), GameConfig.TEXT_COLOR],
 	])
-	_set_call_to_action("ENTER", "play")
+	_set_call_to_action("ENTER", "play solo")
 	_set_hints([
+		[["H"], "host a game others can join"],
+		[["J"], "join the last address used"],
 		[["SPACE"], "fire the item you carry"],
 		[["C", "V"], "camera  /  flat view"],
-		[["P", "ESC"], "pause  /  quit"],
+	])
+	_present()
+
+
+## The waiting room, before the host starts the round.
+func show_lobby(is_host: bool, players: int, addresses: String) -> void:
+	_title.text = "LOBBY"
+	_title.add_theme_color_override("font_color", GameConfig.ACCENT_COLOR)
+	_subtitle.text = (
+		"others join you at  %s" % addresses if is_host
+		else "waiting for the host to start"
+	)
+	_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
+	_set_chips([
+		["PLAYERS", str(players), GameConfig.SNAKE_HEAD_COLOR],
+	])
+	if is_host:
+		_set_call_to_action("ENTER", "start the round")
+	else:
+		_set_call_to_action("...", "waiting")
+	_set_hints([
+		[["ESC"], "leave the session"],
+	])
+	_present()
+
+
+## The end of a multiplayer round: one winner, everybody else watched.
+func show_result(title: String, color: Color, subtitle: String, score: int) -> void:
+	_title.text = title
+	_title.add_theme_color_override("font_color", color)
+	_subtitle.text = subtitle
+	_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
+	_set_chips([
+		["YOUR SCORE", str(score), GameConfig.TEXT_COLOR],
+	])
+	_set_call_to_action("ENTER", "back to the lobby")
+	_set_hints([
+		[["M"], "leave the session"],
+		[["ESC"], "quit"],
 	])
 	_present()
 

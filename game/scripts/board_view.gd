@@ -1,11 +1,11 @@
 class_name BoardView
 extends Node3D
 
-## Everything visible on the board: floor, ramparts, snake and food.
+## Everything visible on the arena: floor, ramparts, items and the snakes.
 ##
-## The static geometry is built once. The snake itself is a single procedural
-## tube rebuilt every frame by SnakeMesh, so the body is continuous rather
-## than a string of separate meshes.
+## The static geometry is built once. Each snake gets its own procedural tube
+## and pair of eyes, created the first time it is seen and kept afterwards,
+## so a match with several players costs no more per frame than one.
 
 const FLOOR_SHADER := "res://shaders/arena_floor.gdshader"
 const FLASH_DURATION := 0.45
@@ -13,9 +13,6 @@ const WALL_HEIGHT := 0.8
 const WALL_THICKNESS := 0.4
 const BODY_HEIGHT := 0.4
 
-var _eyes: Array[MeshInstance3D] = []
-var _body: SnakeMesh
-var _food: MeshInstance3D
 var _floor_material: ShaderMaterial
 var _head_lamp: OmniLight3D
 var _bolt: MeshInstance3D
@@ -23,73 +20,160 @@ var _bolt_lamp: OmniLight3D
 var _crate: MeshInstance3D
 var _crate_lamp: OmniLight3D
 var _crate_material: StandardMaterial3D
+var _food: MeshInstance3D
 var _flash_ring: MeshInstance3D
 var _flash_material: StandardMaterial3D
 var _flash_time := -1.0
 var _flash_color := GameConfig.SPARK_COLOR
 
+## id -> { "mesh": SnakeMesh, "eyes": Array }
+var _snakes: Dictionary = {}
+var _eye_mesh: SphereMesh
+var _eye_material: StandardMaterial3D
 
-func build(world: SnakeWorld) -> void:
+
+func build(arena_width: float, arena_height: float) -> void:
 	for child in get_children():
 		child.queue_free()
-	_eyes.clear()
+	_snakes.clear()
 
-	_build_floor(world)
-	_build_walls(world)
-	_build_actors()
-	Journal.info("board", "Board built for a %.0fx%.0f arena" % [world.width, world.height])
+	_build_floor(arena_width, arena_height)
+	_build_walls(arena_width, arena_height)
+	_build_props()
+	Journal.info("board", "Board built for a %.0fx%.0f arena" % [arena_width, arena_height])
 
 
-## Reshape the snake and move the props to match the current world.
-func refresh(world: SnakeWorld, elapsed: float, flash: float) -> void:
-	_body.rebuild(world, BODY_HEIGHT)
-	_body.set_effects(world.boost_intensity(), world.slow_intensity())
-	_body.set_flash(flash)
-	_place_eyes(world)
-	_refresh_lighting(world)
-	_refresh_ground(world, elapsed)
+## Reshape every snake and move the props to match the current match.
+func refresh(game_match: SnakeMatch, local_id: int, elapsed: float, flash: float) -> void:
+	var order: Array = game_match.snakes.keys()
+	order.sort()
+
+	for id: int in order:
+		var snake: SnakeWorld = game_match.snakes[id]
+		var visual := _visual_for(id, order.find(id), id == local_id)
+		var mesh: SnakeMesh = visual["mesh"]
+		mesh.visible = snake.alive
+		for eye: MeshInstance3D in visual["eyes"]:
+			eye.visible = snake.alive
+		if not snake.alive:
+			continue
+		mesh.rebuild(snake, BODY_HEIGHT)
+		mesh.set_effects(snake.boost_intensity(), snake.slow_intensity())
+		mesh.set_flash(flash if id == local_id else 0.0)
+		_place_eyes(visual["eyes"], snake)
+
+	for id: int in _snakes.keys():
+		if not game_match.snakes.has(id):
+			_drop_visual(id)
+
+	_refresh_lighting(game_match.snakes.get(local_id), game_match)
+	_refresh_items(game_match, elapsed)
 	_refresh_flash(elapsed)
 
+
+# --------------------------------------------------------------------------- #
+# Snakes
+# --------------------------------------------------------------------------- #
+func _visual_for(id: int, index: int, is_local: bool) -> Dictionary:
+	if _snakes.has(id):
+		return _snakes[id]
+
+	var palette: Array = GameConfig.palette_for(0 if is_local else maxi(1, index))
+	var mesh := SnakeMesh.new()
+	mesh.name = "Snake%d" % id
+	add_child(mesh)
+	mesh.set_palette(palette[0], palette[1], palette[2])
+
+	var eyes: Array[MeshInstance3D] = []
+	for _index in range(2):
+		var eye := MeshInstance3D.new()
+		eye.mesh = _eye_mesh
+		eye.material_override = _eye_material
+		add_child(eye)
+		eyes.append(eye)
+
+	_snakes[id] = {"mesh": mesh, "eyes": eyes}
+	return _snakes[id]
+
+
+func _drop_visual(id: int) -> void:
+	var visual: Dictionary = _snakes[id]
+	visual["mesh"].queue_free()
+	for eye: MeshInstance3D in visual["eyes"]:
+		eye.queue_free()
+	_snakes.erase(id)
+
+
+func _place_eyes(eyes: Array, snake: SnakeWorld) -> void:
+	var forward := Vector3(snake.direction().x, 0.0, snake.direction().y)
+	var side := forward.cross(Vector3.UP)
+	var center := Vector3(snake.head_position.x, BODY_HEIGHT, snake.head_position.y)
+	# The eyes must sit on the skin of the tube, not inside it, so they are
+	# pushed out along a direction and not along each axis separately.
+	var bulge := GameConfig.SNAKE_RADIUS * GameConfig.HEAD_BULGE
+	for index in range(eyes.size()):
+		var sign_value := -1.0 if index == 0 else 1.0
+		var outwards := (
+			forward * 0.45 + side * (0.78 * sign_value) + Vector3.UP * 0.58
+		).normalized()
+		eyes[index].position = center + outwards * (bulge * 0.95)
+
+
+# --------------------------------------------------------------------------- #
+# Lighting and props
+# --------------------------------------------------------------------------- #
+## Feed the floor shader and the head lamp. Both follow whatever effect is
+## running on the local snake: warm while boosted, cold while slowed.
+func _refresh_lighting(local, game_match: SnakeMatch) -> void:
+	_floor_material.set_shader_parameter(
+		"arena_size", Vector2(game_match.width, game_match.height)
+	)
+	if local == null or not local.alive:
+		_head_lamp.light_energy = 0.0
+		_floor_material.set_shader_parameter("head_glow", 0.0)
+		return
+
+	var boost: float = local.boost_intensity()
+	var slow: float = local.slow_intensity()
+	var glow: float = maxf(boost, slow * 0.8)
+	var tint := GameConfig.BOOST_COLOR if boost >= slow else GameConfig.FROST_COLOR
+
+	_floor_material.set_shader_parameter("head_position", local.head_position)
+	_floor_material.set_shader_parameter("head_glow", glow)
+	_floor_material.set_shader_parameter("glow_color", tint)
+
+	var ahead: Vector2 = local.direction() * 0.6
+	_head_lamp.position = Vector3(
+		local.head_position.x + ahead.x, 1.7, local.head_position.y + ahead.y
+	)
+	var lamp_color := GameConfig.SNAKE_HEAD_COLOR.lerp(GameConfig.SPARK_COLOR, boost)
+	lamp_color = lamp_color.lerp(GameConfig.FROST_COLOR, slow)
+	_head_lamp.light_color = lamp_color
+	_head_lamp.light_energy = 0.15 + boost * 1.7 + slow * 0.9
+
+
+func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 	_food.position = Vector3(
-		world.food.x,
-		0.5 + 0.08 * sin(elapsed * 4.0),
-		world.food.y
+		game_match.food.x, 0.5 + 0.08 * sin(elapsed * 4.0), game_match.food.y
 	)
 	_food.rotation.y = elapsed * 1.6
 
-
-## Feed the floor shader and the head lamp: both react to the boost.
-func _refresh_lighting(world: SnakeWorld) -> void:
-	var boost := world.boost_intensity()
-	_floor_material.set_shader_parameter("head_position", world.head_position)
-	_floor_material.set_shader_parameter("head_glow", boost)
-
-	var ahead := world.direction() * 0.6
-	_head_lamp.position = Vector3(
-		world.head_position.x + ahead.x, 1.7, world.head_position.y + ahead.y
-	)
-	_head_lamp.light_color = GameConfig.SNAKE_HEAD_COLOR.lerp(GameConfig.SPARK_COLOR, boost)
-	_head_lamp.light_energy = 0.15 + boost * 1.7
-
-
-## What waits on the arena: the bolt, and the crate that could be either.
-func _refresh_ground(world: SnakeWorld, elapsed: float) -> void:
-	var has_bolt := world.has_ground(SnakeWorld.Ground.BOLT)
+	var has_bolt := game_match.has_ground(SnakeWorld.Ground.BOLT)
 	_bolt.visible = has_bolt
 	_bolt_lamp.visible = has_bolt
 	if has_bolt:
-		var spot := world.ground_position(SnakeWorld.Ground.BOLT)
+		var spot := game_match.ground_position(SnakeWorld.Ground.BOLT)
 		_bolt.position = Vector3(spot.x, 0.75 + 0.1 * sin(elapsed * 2.6), spot.y)
 		_bolt.rotation.y = elapsed * 1.4
 		_bolt_lamp.position = _bolt.position
 		# A slow throb, so the bolt catches the eye across a dark arena.
 		_bolt_lamp.light_energy = 0.9 + 0.35 * sin(elapsed * 3.0)
 
-	var has_crate := world.has_ground(SnakeWorld.Ground.MYSTERY)
+	var has_crate := game_match.has_ground(SnakeWorld.Ground.MYSTERY)
 	_crate.visible = has_crate
 	_crate_lamp.visible = has_crate
 	if has_crate:
-		var spot := world.ground_position(SnakeWorld.Ground.MYSTERY)
+		var spot := game_match.ground_position(SnakeWorld.Ground.MYSTERY)
 		_crate.position = Vector3(spot.x, 0.85 + 0.12 * sin(elapsed * 2.0), spot.y)
 		# Tilted back towards the cameras, which all look down at the arena,
 		# and turning slowly so the mark stays readable.
@@ -134,9 +218,11 @@ func _refresh_flash(elapsed: float) -> void:
 
 
 # --------------------------------------------------------------------------- #
-func _build_floor(world: SnakeWorld) -> void:
+# Static geometry
+# --------------------------------------------------------------------------- #
+func _build_floor(arena_width: float, arena_height: float) -> void:
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(world.width, world.height)
+	plane.size = Vector2(arena_width, arena_height)
 	# The grid is drawn by the shader, but it needs vertices to interpolate
 	# the world position across.
 	plane.subdivide_width = 8
@@ -147,31 +233,31 @@ func _build_floor(world: SnakeWorld) -> void:
 	_floor_material.set_shader_parameter("base_color", GameConfig.FLOOR_COLOR)
 	_floor_material.set_shader_parameter("line_color", GameConfig.GRID_COLOR)
 	_floor_material.set_shader_parameter("glow_color", GameConfig.BOOST_COLOR)
-	_floor_material.set_shader_parameter("arena_size", Vector2(world.width, world.height))
+	_floor_material.set_shader_parameter("arena_size", Vector2(arena_width, arena_height))
 
 	var instance := MeshInstance3D.new()
 	instance.name = "Floor"
 	instance.mesh = plane
 	instance.material_override = _floor_material
-	instance.position = Vector3(world.width * 0.5, 0.0, world.height * 0.5)
+	instance.position = Vector3(arena_width * 0.5, 0.0, arena_height * 0.5)
 	add_child(instance)
 
 
-func _build_walls(world: SnakeWorld) -> void:
+func _build_walls(arena_width: float, arena_height: float) -> void:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = GameConfig.WALL_COLOR.darkened(0.2)
 	material.roughness = 0.65
 
 	var half := WALL_THICKNESS / 2.0
 	var walls := [
-		{"size": Vector3(world.width + WALL_THICKNESS * 2.0, WALL_HEIGHT, WALL_THICKNESS),
-		 "pos": Vector3(world.width / 2.0, WALL_HEIGHT / 2.0, -half)},
-		{"size": Vector3(world.width + WALL_THICKNESS * 2.0, WALL_HEIGHT, WALL_THICKNESS),
-		 "pos": Vector3(world.width / 2.0, WALL_HEIGHT / 2.0, world.height + half)},
-		{"size": Vector3(WALL_THICKNESS, WALL_HEIGHT, world.height),
-		 "pos": Vector3(-half, WALL_HEIGHT / 2.0, world.height / 2.0)},
-		{"size": Vector3(WALL_THICKNESS, WALL_HEIGHT, world.height),
-		 "pos": Vector3(world.width + half, WALL_HEIGHT / 2.0, world.height / 2.0)},
+		{"size": Vector3(arena_width + WALL_THICKNESS * 2.0, WALL_HEIGHT, WALL_THICKNESS),
+		 "pos": Vector3(arena_width / 2.0, WALL_HEIGHT / 2.0, -half)},
+		{"size": Vector3(arena_width + WALL_THICKNESS * 2.0, WALL_HEIGHT, WALL_THICKNESS),
+		 "pos": Vector3(arena_width / 2.0, WALL_HEIGHT / 2.0, arena_height + half)},
+		{"size": Vector3(WALL_THICKNESS, WALL_HEIGHT, arena_height),
+		 "pos": Vector3(-half, WALL_HEIGHT / 2.0, arena_height / 2.0)},
+		{"size": Vector3(WALL_THICKNESS, WALL_HEIGHT, arena_height),
+		 "pos": Vector3(arena_width + half, WALL_HEIGHT / 2.0, arena_height / 2.0)},
 	]
 	for index in range(walls.size()):
 		var box := BoxMesh.new()
@@ -184,26 +270,23 @@ func _build_walls(world: SnakeWorld) -> void:
 		add_child(instance)
 
 
-func _build_actors() -> void:
-	_body = SnakeMesh.new()
-	_body.name = "Body"
-	add_child(_body)
+func _build_props() -> void:
+	_eye_mesh = SphereMesh.new()
+	_eye_mesh.radius = 0.085
+	_eye_mesh.height = 0.17
+	_eye_mesh.radial_segments = 8
+	_eye_mesh.rings = 4
+	_eye_material = StandardMaterial3D.new()
+	_eye_material.albedo_color = GameConfig.EYE_COLOR
+	_eye_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
-	var eye_mesh := SphereMesh.new()
-	eye_mesh.radius = 0.085
-	eye_mesh.height = 0.17
-	eye_mesh.radial_segments = 8
-	eye_mesh.rings = 4
-	var eye_material := StandardMaterial3D.new()
-	eye_material.albedo_color = GameConfig.EYE_COLOR
-	eye_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	for index in range(2):
-		var eye := MeshInstance3D.new()
-		eye.name = "Eye%d" % index
-		eye.mesh = eye_mesh
-		eye.material_override = eye_material
-		add_child(eye)
-		_eyes.append(eye)
+	# A light riding the head: barely there normally, electric while boosted.
+	_head_lamp = OmniLight3D.new()
+	_head_lamp.name = "HeadLamp"
+	_head_lamp.omni_range = 7.0
+	_head_lamp.light_energy = 0.0
+	_head_lamp.shadow_enabled = false
+	add_child(_head_lamp)
 
 	var food_mesh := BoxMesh.new()
 	food_mesh.size = Vector3.ONE * (GameConfig.FOOD_RADIUS * 1.5)
@@ -219,27 +302,6 @@ func _build_actors() -> void:
 	_food.mesh = food_mesh
 	_food.material_override = food_material
 	add_child(_food)
-
-	# A light riding the head: barely there normally, electric while boosted.
-	_head_lamp = OmniLight3D.new()
-	_head_lamp.name = "HeadLamp"
-	_head_lamp.omni_range = 7.0
-	_head_lamp.light_energy = 0.0
-	_head_lamp.shadow_enabled = false
-	add_child(_head_lamp)
-
-	var bolt_material := StandardMaterial3D.new()
-	bolt_material.albedo_color = GameConfig.BOOST_COLOR
-	bolt_material.emission_enabled = true
-	bolt_material.emission = GameConfig.BOOST_COLOR
-	bolt_material.emission_energy_multiplier = 0.8
-
-	_bolt = MeshInstance3D.new()
-	_bolt.name = "Bolt"
-	_bolt.mesh = _build_bolt_mesh()
-	_bolt.material_override = bolt_material
-	_bolt.visible = false
-	add_child(_bolt)
 
 	_crate_material = StandardMaterial3D.new()
 	_crate_material.albedo_color = GameConfig.MYSTERY_COLOR
@@ -262,6 +324,19 @@ func _build_actors() -> void:
 	_crate_lamp.shadow_enabled = false
 	_crate_lamp.visible = false
 	add_child(_crate_lamp)
+
+	var bolt_material := StandardMaterial3D.new()
+	bolt_material.albedo_color = GameConfig.BOOST_COLOR
+	bolt_material.emission_enabled = true
+	bolt_material.emission = GameConfig.BOOST_COLOR
+	bolt_material.emission_energy_multiplier = 0.8
+
+	_bolt = MeshInstance3D.new()
+	_bolt.name = "Bolt"
+	_bolt.mesh = _build_bolt_mesh()
+	_bolt.material_override = bolt_material
+	_bolt.visible = false
+	add_child(_bolt)
 
 	_bolt_lamp = OmniLight3D.new()
 	_bolt_lamp.name = "BoltLamp"
@@ -376,18 +451,3 @@ func _extrude(outlines: Array, depth: float) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
-
-
-func _place_eyes(world: SnakeWorld) -> void:
-	var forward := Vector3(world.direction().x, 0.0, world.direction().y)
-	var side := forward.cross(Vector3.UP)
-	var center := Vector3(world.head_position.x, BODY_HEIGHT, world.head_position.y)
-	# The eyes must sit on the skin of the tube, not inside it, so they are
-	# pushed out along a direction and not along each axis separately.
-	var bulge := GameConfig.SNAKE_RADIUS * GameConfig.HEAD_BULGE
-	for index in range(_eyes.size()):
-		var sign_value := -1.0 if index == 0 else 1.0
-		var outwards := (
-			forward * 0.45 + side * (0.78 * sign_value) + Vector3.UP * 0.58
-		).normalized()
-		_eyes[index].position = center + outwards * (bulge * 0.95)
