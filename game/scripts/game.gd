@@ -156,6 +156,7 @@ var _pending_host := false
 var _pending_join := ""
 var _pending_expect_timeout := false
 var _last_menu_message := ""
+var _last_death_cause: SnakeWorld.Outcome = SnakeWorld.Outcome.MOVING
 
 
 ## --host and --join let a test (or a shortcut) open a session immediately.
@@ -292,10 +293,16 @@ func _turn_from_keys() -> float:
 # --------------------------------------------------------------------------- #
 # Match events (host and solo only: a client takes these from snapshots)
 # --------------------------------------------------------------------------- #
+## What killed the last snake to die, so a test can check the cause.
+func last_death_cause() -> SnakeWorld.Outcome:
+	return _last_death_cause
+
+
 func _on_snake_died(id: int, cause: SnakeWorld.Outcome) -> void:
+	_last_death_cause = cause
 	var snake: SnakeWorld = game_match.snakes[id]
 	Journal.info("game", "%s died (%s) at (%.1f,%.1f) with score %d" % [
-		_player_name(id), ["moving", "wall", "self", "another snake"][cause],
+		_player_name(id), ["moving", "wall", "self", "another snake", "a rock"][cause],
 		snake.death_position.x, snake.death_position.y, snake.score,
 	])
 	if id == Session.local_id():
@@ -365,9 +372,13 @@ func _show_result(winner: int) -> void:
 		_hud.show_result(title, color, subtitle, snake.score if snake != null else 0)
 	else:
 		var snake = local_snake()
+		var reason := "you bit yourself"
+		if _last_death_cause == SnakeWorld.Outcome.DEAD_ROCK:
+			reason = "you hit a rock"
+		elif snake != null and not snake.is_inside(snake.death_position):
+			reason = "you hit a wall"
 		_hud.show_game_over(
-			"you hit a wall" if snake != null and not snake.is_inside(snake.death_position)
-			else "you bit yourself",
+			reason,
 			snake.score if snake != null else 0,
 			PlayerProfile.high_score(),
 			_last_record
@@ -407,7 +418,7 @@ func _on_peer_joined(id: int) -> void:
 		_refresh_lobby()
 	if Session.is_host() and state == State.PLAY:
 		# Latecomers watch the round that is already running.
-		_start_round.rpc_id(id, game_match.snakes.keys(), true)
+		_start_round.rpc_id(id, game_match.snakes.keys(), true, game_match.obstacle_data())
 
 
 func _on_peer_left(id: int) -> void:
@@ -437,16 +448,18 @@ func _start_match() -> void:
 	game_match.snakes.clear()
 	for id: int in Session.players:
 		game_match.add_snake(id)
-	_start_round.rpc(game_match.snakes.keys(), false)
+	# The arena is built here, then handed out: every player must be looking
+	# at the same rocks or the host's rulings would make no sense on screen.
 	_begin_round(game_match.snakes.keys(), false)
+	_start_round.rpc(game_match.snakes.keys(), false, game_match.obstacle_data())
 
 
 @rpc("authority", "call_remote", "reliable")
-func _start_round(ids: Array, as_spectator: bool) -> void:
-	_begin_round(ids, as_spectator)
+func _start_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array) -> void:
+	_begin_round(ids, as_spectator, rocks)
 
 
-func _begin_round(ids: Array, as_spectator: bool) -> void:
+func _begin_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array = PackedFloat32Array()) -> void:
 	# Only a network client mirrors somebody else's match. Offline and host
 	# both judge their own, which is what solo has always done.
 	if Session.role == Session.Role.CLIENT:
@@ -457,6 +470,9 @@ func _begin_round(ids: Array, as_spectator: bool) -> void:
 	else:
 		game_match.authoritative = true
 	game_match.start()
+	if not rocks.is_empty():
+		game_match.set_obstacles(rocks)
+	_board.set_obstacles(game_match.obstacles)
 
 	_accumulator = 0.0
 	_flash = 0.0

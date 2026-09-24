@@ -19,6 +19,14 @@ var snakes: Dictionary = {}          # id -> SnakeWorld
 var food := Vector2.ZERO
 var ground: Array = []               # [{ "kind": Ground, "position": Vector2 }]
 
+## Rocks: solid, round, of varying size. They are generated once per round
+## and, on a client, copied from the host so both see the same arena.
+var obstacles: Array = []            # [{ "position": Vector2, "radius": float, "spin": float, "sides": int }]
+var spawns: Dictionary = {}          # id -> [Vector2 position, float heading]
+## How far ahead of a spawn point the arena was actually kept clear. A
+## crowded arena has to settle for less than the full lane.
+var lane_length := GameConfig.OBSTACLE_LANE_LENGTH
+
 ## A client mirrors the match instead of judging it: it keeps the snakes
 ## gliding between snapshots and takes deaths, food and items from the host.
 var authoritative := true
@@ -78,10 +86,13 @@ func start() -> void:
 	var ids: Array = snakes.keys()
 	ids.sort()
 	var count := maxi(1, ids.size())
+	spawns = {}
 	for index in range(ids.size()):
 		var spot := _spawn_pose(index, count)
+		spawns[ids[index]] = spot
 		snakes[ids[index]].reset(spot[0], spot[1])
 
+	_build_obstacles()
 	food = free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0)
 	running = true
 
@@ -97,6 +108,136 @@ func _spawn_pose(index: int, count: int) -> Array:
 	var angle := TAU * index / count
 	var position := centre + Vector2(cos(angle), sin(angle)) * radius
 	return [position, angle + PI * 0.5]
+
+
+# --------------------------------------------------------------------------- #
+# Rocks
+# --------------------------------------------------------------------------- #
+## Scatter rocks of assorted sizes. Everything a snake needs at the start of
+## a round - its spawn point and the lane it sets off along - is kept clear,
+## and two rocks never sit closer than a snake is wide, so the arena always
+## stays navigable even when it is cluttered.
+func _build_obstacles() -> void:
+	obstacles = []
+	lane_length = GameConfig.OBSTACLE_LANE_LENGTH
+	var wanted := _rng.randi_range(GameConfig.OBSTACLE_COUNT.x, GameConfig.OBSTACLE_COUNT.y)
+	var attempts := 0
+	while obstacles.size() < wanted and attempts < 900:
+		attempts += 1
+		# Every player's lane has to stay clear, so a full arena leaves far
+		# less room for rocks than a solo one. Rather than give up on them,
+		# the protected lane is shortened a little at a time.
+		if attempts % 250 == 0:
+			lane_length = maxf(GameConfig.OBSTACLE_LANE_MIN, lane_length - 3.0)
+		# Big rocks go down first, while there is room for them; what is
+		# left over gets filled with smaller ones. A crowded arena therefore
+		# ends up with more boulders and fewer cliffs, never with nothing.
+		var squeeze := clampf(1.0 - attempts / 500.0, 0.0, 1.0)
+		var radius := _rng.randf_range(
+			GameConfig.OBSTACLE_RADIUS.x,
+			lerpf(GameConfig.OBSTACLE_RADIUS.x + 0.4, GameConfig.OBSTACLE_RADIUS.y, squeeze)
+		)
+		# A corridor is always left between a rock and the wall, so the lane
+		# running round the edge of the arena is never pinched shut.
+		var margin := radius + GameConfig.OBSTACLE_WALL_GAP
+		var candidate := Vector2(
+			_rng.randf_range(margin, width - margin),
+			_rng.randf_range(margin, height - margin)
+		)
+		if not _obstacle_fits(candidate, radius):
+			continue
+		obstacles.append({
+			"position": candidate,
+			"radius": radius,
+			"spin": _rng.randf() * TAU,
+			"sides": _rng.randi_range(5, 7),
+		})
+
+
+func _obstacle_fits(candidate: Vector2, radius: float) -> bool:
+	for other: Dictionary in obstacles:
+		if candidate.distance_to(other["position"]) < radius + other["radius"] + GameConfig.OBSTACLE_GAP:
+			return false
+	for id: int in spawns:
+		var pose: Array = spawns[id]
+		if candidate.distance_to(pose[0]) < radius + GameConfig.OBSTACLE_SPAWN_CLEAR:
+			return false
+		for point: Vector2 in lane_points(pose[0], pose[1]):
+			if candidate.distance_to(point) < radius + GameConfig.OBSTACLE_LANE_CLEAR:
+				return false
+	return true
+
+
+## The stretch of arena straight ahead of a spawn point. Kept clear so the
+## first seconds of a round are never a blind crash.
+func lane_points(position: Vector2, heading: float) -> Array:
+	var direction := Vector2(cos(heading), sin(heading))
+	var points: Array = []
+	var travelled := 1.0
+	while travelled <= lane_length:
+		points.append(position + direction * travelled)
+		travelled += 1.5
+	return points
+
+
+## Is that point inside a rock? Clearance widens it by the body radius.
+func blocked_by_obstacle(point: Vector2, clearance: float = 0.0) -> bool:
+	for rock: Dictionary in obstacles:
+		if point.distance_to(rock["position"]) < rock["radius"] + clearance:
+			return true
+	return false
+
+
+## Something dropped in a pocket between two rocks can be impossible to
+## reach without dying for it, so anything laid on the ground has to have
+## open floor on most sides of it. A spot against a wall loses the probes
+## that fall outside the arena, which is why five out of eight is enough.
+func has_elbow_room(candidate: Vector2) -> bool:
+	var open := 0
+	for index in range(8):
+		var probe := candidate + Vector2.from_angle(TAU * index / 8.0) * 2.8
+		if probe.x < 0.4 or probe.y < 0.4 or probe.x > width - 0.4 or probe.y > height - 0.4:
+			continue
+		if blocked_by_obstacle(probe, GameConfig.SNAKE_RADIUS):
+			continue
+		open += 1
+	return open >= 5
+
+
+## Rocks as plain floats, so the host can hand the arena to a client.
+func obstacle_data() -> PackedFloat32Array:
+	var data := PackedFloat32Array()
+	for rock: Dictionary in obstacles:
+		data.append(rock["position"].x)
+		data.append(rock["position"].y)
+		data.append(rock["radius"])
+		data.append(rock["spin"])
+		data.append(float(rock["sides"]))
+	return data
+
+
+func set_obstacles(data: PackedFloat32Array) -> void:
+	obstacles = []
+	var index := 0
+	while index + 4 < data.size():
+		obstacles.append({
+			"position": Vector2(data[index], data[index + 1]),
+			"radius": data[index + 2],
+			"spin": data[index + 3],
+			"sides": int(data[index + 4]),
+		})
+		index += 5
+
+
+## Put a rock at a chosen spot. The self-test lays one in the snake's path
+## the way it lays items, so the collision is exercised on purpose.
+func place_obstacle(position: Vector2, radius: float) -> void:
+	obstacles.append({
+		"position": position,
+		"radius": radius,
+		"spin": _rng.randf() * TAU,
+		"sides": 6,
+	})
 
 
 # --------------------------------------------------------------------------- #
@@ -119,6 +260,10 @@ func step(delta: float) -> void:
 		var outcome := snake.step(delta)
 		if SnakeWorld.is_death(outcome):
 			snake_died.emit(id, outcome)
+			continue
+		if blocked_by_obstacle(snake.head_position, GameConfig.SNAKE_RADIUS):
+			snake.kill(snake.head_position)
+			snake_died.emit(id, SnakeWorld.Outcome.DEAD_ROCK)
 			continue
 		_check_bite(id, snake)
 
@@ -275,8 +420,10 @@ func free_spot(margin: float, clearance: float) -> Vector2:
 			_rng.randf_range(margin, width - margin),
 			_rng.randf_range(margin, height - margin)
 		)
-		var clear := true
+		var clear := not blocked_by_obstacle(candidate, margin + 1.0)
 		for id: int in snakes:
+			if not clear:
+				break
 			var snake: SnakeWorld = snakes[id]
 			if snake.head_position.distance_to(candidate) < clearance:
 				clear = false
@@ -291,9 +438,17 @@ func free_spot(margin: float, clearance: float) -> Vector2:
 				if candidate.distance_to(item["position"]) < 2.5:
 					clear = false
 					break
+		if clear and not has_elbow_room(candidate):
+			clear = false
 		if clear:
 			return candidate
-	return Vector2(
-		_rng.randf_range(margin, width - margin),
-		_rng.randf_range(margin, height - margin)
-	)
+	# Out of attempts: settle for anywhere that is at least not inside a rock,
+	# since an item buried in one could never be picked up.
+	for _last_try in range(60):
+		var fallback := Vector2(
+			_rng.randf_range(margin, width - margin),
+			_rng.randf_range(margin, height - margin)
+		)
+		if not blocked_by_obstacle(fallback, margin + 0.5) and has_elbow_room(fallback):
+			return fallback
+	return Vector2(width * 0.5, height * 0.5)

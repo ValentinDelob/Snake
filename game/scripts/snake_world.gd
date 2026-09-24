@@ -11,7 +11,7 @@ extends RefCounted
 ## SnakeMatch. A snake owned by a remote player is never simulated here: it
 ## is fed snapshots and only keeps the trail needed to draw it.
 
-enum Outcome { MOVING, DEAD_WALL, DEAD_SELF, DEAD_OTHER }
+enum Outcome { MOVING, DEAD_WALL, DEAD_SELF, DEAD_OTHER, DEAD_ROCK }
 
 ## What an item does once it takes effect.
 enum Item { NONE, SPEED, SLOW }

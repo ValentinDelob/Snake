@@ -89,6 +89,9 @@ func _blocked(world: SnakeWorld, angle_offset: float, distance: float) -> bool:
 			return true
 		if world.hits_body(point):
 			return true
+		# A rock stops you as dead as a wall does.
+		if _match != null and _match.blocked_by_obstacle(point, GameConfig.SNAKE_RADIUS):
+			return true
 		# Another snake is every bit as solid as your own tail.
 		if _match != null:
 			for id: int in _match.snakes:
@@ -108,5 +111,7 @@ func _room(world: SnakeWorld, angle_offset: float) -> float:
 		travelled += 0.6
 		var point: Vector2 = world.head_position + direction * travelled
 		if not world.is_inside(point) or world.hits_body(point):
+			break
+		if _match != null and _match.blocked_by_obstacle(point, GameConfig.SNAKE_RADIUS):
 			break
 	return travelled

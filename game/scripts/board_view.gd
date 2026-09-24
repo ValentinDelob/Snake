@@ -28,6 +28,8 @@ var _flash_color := GameConfig.SPARK_COLOR
 
 ## id -> { "mesh": SnakeMesh, "eyes": Array }
 var _snakes: Dictionary = {}
+var _rocks: Node3D
+var _rock_material: StandardMaterial3D
 var _eye_mesh: SphereMesh
 var _eye_material: StandardMaterial3D
 
@@ -40,6 +42,9 @@ func build(arena_width: float, arena_height: float) -> void:
 	_build_floor(arena_width, arena_height)
 	_build_walls(arena_width, arena_height)
 	_build_props()
+	_rocks = Node3D.new()
+	_rocks.name = "Rocks"
+	add_child(_rocks)
 	Journal.info("board", "Board built for a %.0fx%.0f arena" % [arena_width, arena_height])
 
 
@@ -241,6 +246,44 @@ func _build_floor(arena_width: float, arena_height: float) -> void:
 	instance.material_override = _floor_material
 	instance.position = Vector3(arena_width * 0.5, 0.0, arena_height * 0.5)
 	add_child(instance)
+
+
+## Raise the round's rocks. They only change between rounds, so they are
+## built once here rather than touched every frame.
+func set_obstacles(obstacles: Array) -> void:
+	if _rocks == null:
+		return
+	for child in _rocks.get_children():
+		child.queue_free()
+
+	if _rock_material == null:
+		_rock_material = StandardMaterial3D.new()
+		_rock_material.albedo_color = GameConfig.OBSTACLE_COLOR
+		_rock_material.roughness = 0.9
+		_rock_material.metallic = 0.05
+
+	for index in range(obstacles.size()):
+		var rock: Dictionary = obstacles[index]
+		var radius: float = rock["radius"]
+		# A tapered prism with few sides reads as stone from any camera, and
+		# the taper keeps the top from hiding what is behind it.
+		var mesh := CylinderMesh.new()
+		mesh.bottom_radius = radius
+		mesh.top_radius = radius * 0.62
+		mesh.height = 0.9 + radius * 0.75
+		mesh.radial_segments = int(rock["sides"])
+		mesh.rings = 1
+
+		var instance := MeshInstance3D.new()
+		instance.name = "Rock%d" % index
+		instance.mesh = mesh
+		instance.material_override = _rock_material
+		instance.position = Vector3(
+			rock["position"].x, mesh.height * 0.5, rock["position"].y
+		)
+		instance.rotation.y = rock["spin"]
+		_rocks.add_child(instance)
+	Journal.debug("board", "Raised %d rock(s)" % obstacles.size())
 
 
 func _build_walls(arena_width: float, arena_height: float) -> void:

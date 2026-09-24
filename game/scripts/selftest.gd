@@ -57,6 +57,16 @@ var crate_malus_forced := false
 var min_multiplier := 1.0
 var multiplier_after_slow := -1.0
 
+# rocks
+var rocks_seen := 0
+var rock_smallest := 99.0
+var rock_largest := 0.0
+var spawn_lanes_clear := true
+var lane_kept := 0.0
+var rock_death := false
+var _rock_dropped := false
+var _rock_dropped_at := -1.0
+
 # network run
 var peers_seen := 0
 var remote_moved := false
@@ -196,6 +206,9 @@ func _network_frame(game) -> void:
 
 	if state_name == "play":
 		round_started = true
+		# A client builds no arena of its own: rocks here mean the host's
+		# arena arrived intact.
+		rocks_seen = maxi(rocks_seen, game.game_match.obstacles.size())
 		_watch_remotes(game)
 		if game.spectating:
 			spectated = true
@@ -256,6 +269,8 @@ func _on_play(game) -> void:
 	if now < _phase_started:
 		_phase_started = 0.0
 		_on_round_restart(game)
+	if now < 1.0:
+		_survey_rocks(game)
 	_watch_world(game, now)
 
 	match phase:
@@ -272,11 +287,47 @@ func _on_play(game) -> void:
 		Phase.PAUSE:
 			_run_pause()
 		Phase.FINISH:
-			if game.agent != null:
-				# No bot and no turn held: a straight line always reaches a
-				# wall, whereas a held turn would circle forever.
-				Journal.info("selftest", "releasing the bot, straight into a wall")
-				game.agent = null
+			_run_finish(game, now)
+
+
+## Look over the rocks this round was given: how many, how varied, and
+## whether any of them sits where a snake starts or sets off.
+func _survey_rocks(game) -> void:
+	var game_match = game.game_match
+	rocks_seen = maxi(rocks_seen, game_match.obstacles.size())
+	lane_kept = game_match.lane_length
+	for rock: Dictionary in game_match.obstacles:
+		rock_smallest = minf(rock_smallest, rock["radius"])
+		rock_largest = maxf(rock_largest, rock["radius"])
+
+	for id: int in game_match.spawns:
+		var pose: Array = game_match.spawns[id]
+		for rock: Dictionary in game_match.obstacles:
+			if rock["position"].distance_to(pose[0]) < rock["radius"] + 1.0:
+				spawn_lanes_clear = false
+				Journal.warn("selftest", "a rock sits on the spawn of player %d" % id)
+			for point: Vector2 in game_match.lane_points(pose[0], pose[1]):
+				if rock["position"].distance_to(point) < rock["radius"] + 0.8:
+					spawn_lanes_clear = false
+					Journal.warn("selftest", "a rock blocks the lane of player %d" % id)
+
+
+## The last phase: lay a rock right in the snake's path and drive into it,
+## so the round ends on a collision the test asked for rather than a wall.
+func _run_finish(game, now: float) -> void:
+	var snake = game.local_snake()
+	if snake == null:
+		return
+	if not _rock_dropped or now - _rock_dropped_at > 8.0:
+		if not _has_room(snake):
+			return
+		game.game_match.place_obstacle(_ahead_of(snake), 1.4)
+		_rock_dropped = true
+		_rock_dropped_at = now
+		Journal.info("selftest", "a rock laid in the snake's path")
+	if game.agent != null:
+		Journal.info("selftest", "releasing the bot, straight into the rock")
+		game.agent = null
 
 
 ## A death can land in the middle of a phase: undo whatever that phase was
@@ -297,6 +348,10 @@ func _on_round_restart(game) -> void:
 	if phase == Phase.CRATE_MALUS and multiplier_after_slow < 0.0:
 		_malus_crate_requested = false
 		_slow_started_at = -1.0
+	if phase == Phase.FINISH and not rock_death:
+		# The rock went with the old arena: the next round needs a new one.
+		_rock_dropped = false
+		_rock_dropped_at = -1.0
 
 
 func _enter_phase(next_phase: Phase, now: float) -> void:
@@ -519,7 +574,10 @@ func _on_pause(game) -> void:
 func _on_gameover(game) -> void:
 	if _finished:
 		return
-	if phase == Phase.FINISH and int(game.stats["games"]) >= 2:
+	if not rock_death and game.last_death_cause() == SnakeWorld.Outcome.DEAD_ROCK:
+		rock_death = true
+		Journal.info("selftest", "the snake died on a rock")
+	if phase == Phase.FINISH and rock_death and int(game.stats["games"]) >= 2:
 		Journal.info("selftest", "quitting from the game over screen")
 		_finished = true
 		press(KEY_ESCAPE)
@@ -544,15 +602,16 @@ func summary(game) -> String:
 			stats["frames"], stats["fps"],
 		]
 	if network:
-		return "network(%s) peers=%d remote_moved=%s winner=%d spectated=%s games=%d frames=%d fps=%.1f" % [
+		return "network(%s) peers=%d remote_moved=%s winner=%d spectated=%s rocks=%d games=%d frames=%d fps=%.1f" % [
 			"host" if Session.is_host() else "client",
-			peers_seen, remote_moved, winner_id, spectated,
+			peers_seen, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
+		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
 		stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 	]
 
@@ -597,6 +656,8 @@ func _verify_network() -> Array:
 		failures.append("the round ended without a winner")
 	if died_locally and not spectated:
 		failures.append("dying did not put this player into the spectator camera")
+	if rocks_seen < GameConfig.OBSTACLE_COUNT.x:
+		failures.append("the arena arrived with %d rock(s)" % rocks_seen)
 	return failures
 
 
@@ -636,6 +697,19 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the slow down never ran to completion")
 	elif absf(multiplier_after_slow - 1.0) > 0.05:
 		failures.append("speed stayed at x%.2f after the slow down" % multiplier_after_slow)
+
+	if rocks_seen < GameConfig.OBSTACLE_COUNT.x:
+		failures.append("only %d rock(s) on the arena" % rocks_seen)
+	elif rock_largest - rock_smallest < 0.5:
+		failures.append("every rock was the same size (r%.1f-%.1f)" % [
+			rock_smallest, rock_largest
+		])
+	if not spawn_lanes_clear:
+		failures.append("a rock was blocking a spawn point or its lane")
+	if lane_kept < GameConfig.OBSTACLE_LANE_MIN:
+		failures.append("the clear lane shrank to %.1f units" % lane_kept)
+	if not rock_death:
+		failures.append("driving into a rock did not kill the snake")
 
 	if _spacing_checks == 0:
 		failures.append("the body spacing was never checked")

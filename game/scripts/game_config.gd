@@ -61,6 +61,19 @@ const SIM_STEP := 1.0 / SIM_HZ
 ## A frame slower than this is logged as a stutter.
 const SLOW_FRAME_SECONDS := 0.15
 
+## Rocks scattered over the arena. They are never placed on a spawn point
+## nor in the lane a snake sets off along, so nobody starts a round already
+## boxed in; everywhere else they are fair game and come in several sizes.
+const OBSTACLE_COUNT := Vector2i(5, 8)
+const OBSTACLE_RADIUS := Vector2(0.85, 2.6)
+const OBSTACLE_GAP := 3.0            # room left between two rocks
+const OBSTACLE_WALL_GAP := 2.2       # corridor left between a rock and a wall
+const OBSTACLE_SPAWN_CLEAR := 5.0    # room left around a spawn point
+const OBSTACLE_LANE_LENGTH := 14.0   # how far ahead the spawn lane is kept clear
+const OBSTACLE_LANE_MIN := 6.0       # never less than this, however crowded
+const OBSTACLE_LANE_CLEAR := 2.2     # half width of that lane
+const OBSTACLE_COLOR := Color(0.24, 0.29, 0.38)
+
 const FLOOR_COLOR := Color(0.13, 0.17, 0.23)
 const GRID_COLOR := Color(0.18, 0.22, 0.29)
 const WALL_COLOR := Color(0.27, 0.34, 0.43)
