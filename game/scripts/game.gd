@@ -143,14 +143,19 @@ func _parse_arguments() -> void:
 				_pending_join = value if value != "" else "127.0.0.1"
 			"--lose-after":
 				lose_after = float(value)
+			"--expect-timeout":
+				_pending_expect_timeout = true
 	if _max_steps <= 0:
 		_max_steps = int(GameConfig.SIM_HZ * 60.0)  # one minute of simulation
 	if _driver != null:
+		_driver.expect_timeout = _pending_expect_timeout
 		PlayerProfile.use_path("user://selftest_profile.json")
 
 
 var _pending_host := false
 var _pending_join := ""
+var _pending_expect_timeout := false
+var _last_menu_message := ""
 
 
 ## --host and --join let a test (or a shortcut) open a session immediately.
@@ -559,7 +564,13 @@ func _set_state(next_state: State) -> void:
 	state = next_state
 
 
+## What the menu last said, so a test can read the reason a join failed.
+func last_menu_message() -> String:
+	return _last_menu_message
+
+
 func _enter_menu(message: String = "") -> void:
+	_last_menu_message = message
 	Session.leave()
 	game_match.snakes.clear()
 	game_match.authoritative = true
@@ -587,7 +598,8 @@ func _refresh_lobby() -> void:
 	_hud.show_lobby(
 		Session.is_host(),
 		Session.players.size(),
-		Session.local_addresses() if Session.is_host() else ""
+		Session.local_addresses() if Session.is_host() else "",
+		Session.connect_address() if Session.connecting else ""
 	)
 
 

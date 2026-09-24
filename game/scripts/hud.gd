@@ -537,18 +537,26 @@ func set_address(address: String) -> void:
 
 
 ## The waiting room, before the host starts the round.
-func show_lobby(is_host: bool, players: int, addresses: String) -> void:
+func show_lobby(is_host: bool, players: int, addresses: String, dialling: String = "") -> void:
 	_title.text = "LOBBY"
 	_title.add_theme_color_override("font_color", GameConfig.ACCENT_COLOR)
-	_subtitle.text = (
-		"others join you at  %s" % addresses if is_host
-		else "waiting for the host to start"
-	)
+	if dialling != "":
+		# Still knocking: say so rather than pretend the host is there.
+		_subtitle.text = "connecting to  %s" % dialling
+	elif is_host:
+		_subtitle.text = "others join you at  %s" % addresses
+	else:
+		_subtitle.text = "waiting for the host to start"
 	_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
-	_set_chips([
-		["PLAYERS", str(players), GameConfig.SNAKE_HEAD_COLOR],
-	])
-	if is_host:
+	if dialling != "":
+		_set_chips([])
+	else:
+		_set_chips([
+			["PLAYERS", str(players), GameConfig.SNAKE_HEAD_COLOR],
+		])
+	if dialling != "":
+		_set_call_to_action("...", "connecting")
+	elif is_host:
 		_set_call_to_action("ENTER", "start the round")
 	else:
 		_set_call_to_action("...", "waiting")

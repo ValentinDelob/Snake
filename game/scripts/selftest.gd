@@ -33,6 +33,14 @@ var camera_schedule := {
 }
 
 var network := false
+## Set by --expect-timeout: instead of playing, this run only checks that a
+## join to a host that is not there gives up on its own.
+var expect_timeout := false
+var timeout_waited := -1.0
+var timeout_message := ""
+var _dialled := false
+var _dial_started := 0.0
+
 var states_seen := {}
 var views_seen := {}
 var cameras_seen := {}
@@ -104,6 +112,10 @@ func on_frame(game) -> void:
 		Journal.info("selftest", "reached state: %s" % state_name)
 		states_seen[state_name] = true
 
+	if expect_timeout:
+		_timeout_frame(game)
+		return
+
 	if network or Session.is_online():
 		network = true
 		_network_frame(game)
@@ -118,6 +130,61 @@ func on_frame(game) -> void:
 			_on_pause(game)
 		"gameover":
 			_on_gameover(game)
+
+
+# --------------------------------------------------------------------------- #
+# The give-up script: join nobody, wait to be dropped back on the menu
+# --------------------------------------------------------------------------- #
+func _timeout_frame(game) -> void:
+	var state_name: String = game.state_name()
+	var now := Time.get_ticks_msec() / 1000.0
+
+	if not _dialled:
+		if state_name == "lobby":
+			_dialled = true
+			_dial_started = now
+			Journal.info("selftest", "dialling a host that is not there")
+		elif now > 10.0:
+			timeout_message = "the join never even opened a session"
+			_finished = true
+			press(KEY_ESCAPE)
+		return
+
+	if _finished:
+		return
+
+	if state_name == "menu":
+		timeout_waited = now - _dial_started
+		timeout_message = game.last_menu_message()
+		Journal.info("selftest", "back on the menu after %.1f s: %s" % [
+			timeout_waited, timeout_message
+		])
+		_finished = true
+		press(KEY_ESCAPE)
+	elif now - _dial_started > Session.CONNECT_TIMEOUT + 5.0:
+		timeout_waited = now - _dial_started
+		Journal.warn("selftest", "still waiting after %.1f s" % timeout_waited)
+		_finished = true
+		press(KEY_ESCAPE)
+
+
+func _verify_timeout() -> Array:
+	var failures: Array = []
+	if not _dialled:
+		failures.append("the join never opened a session")
+	if timeout_waited < 0.0:
+		failures.append("the game never gave up: still waiting for the host")
+		return failures
+	# A little slack either side: the countdown only ticks on frames.
+	if timeout_waited < Session.CONNECT_TIMEOUT - 1.0:
+		failures.append("gave up too early: %.1f s" % timeout_waited)
+	if timeout_waited > Session.CONNECT_TIMEOUT + 2.0:
+		failures.append("gave up too late: %.1f s" % timeout_waited)
+	if timeout_message.strip_edges().is_empty():
+		failures.append("the menu did not say why the join failed")
+	if Session.is_online():
+		failures.append("the session was left open after giving up")
+	return failures
 
 
 # --------------------------------------------------------------------------- #
@@ -471,6 +538,11 @@ func _on_gameover(game) -> void:
 # --------------------------------------------------------------------------- #
 func summary(game) -> String:
 	var stats: Dictionary = game.stats
+	if expect_timeout:
+		return "join-timeout waited=%.1fs limit=%.1fs message=%s frames=%d fps=%.1f" % [
+			timeout_waited, Session.CONNECT_TIMEOUT, timeout_message,
+			stats["frames"], stats["fps"],
+		]
 	if network:
 		return "network(%s) peers=%d remote_moved=%s winner=%d spectated=%s games=%d frames=%d fps=%.1f" % [
 			"host" if Session.is_host() else "client",
@@ -490,7 +562,9 @@ func verify(game) -> Array:
 	var failures: Array = []
 	var stats: Dictionary = game.stats
 
-	if network:
+	if expect_timeout:
+		failures.append_array(_verify_timeout())
+	elif network:
 		failures.append_array(_verify_network())
 	else:
 		failures.append_array(_verify_solo(stats))
@@ -502,7 +576,7 @@ func verify(game) -> Array:
 	# Two instances of the game share one log file, so in a network run the
 	# lines of the other machine would be read as ours. The harness checks
 	# each process separately instead.
-	if not network:
+	if not network and not expect_timeout:
 		var engine_errors := _engine_errors()
 		if not engine_errors.is_empty():
 			failures.append("engine errors logged: %s" % str(engine_errors.slice(0, 3)))

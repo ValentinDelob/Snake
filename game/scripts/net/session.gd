@@ -16,19 +16,53 @@ signal host_disconnected()
 const DEFAULT_PORT := 27015
 const MAX_PLAYERS := 8
 
+## How long to wait for the host to answer before giving up. ENet keeps
+## retrying for far longer than anybody is willing to stare at a lobby, so
+## the wait is cut short here instead.
+const CONNECT_TIMEOUT := 5.0
+
 enum Role { OFFLINE, HOST, CLIENT }
 
 var role: Role = Role.OFFLINE
 var players: Dictionary = {}        # id -> { "name": String }
 var last_error := ""
+var connecting := false             # dialling a host, no answer yet
+
+var _connect_address := ""
+var _connect_countdown := 0.0
 
 
 func _ready() -> void:
+	set_process(false)
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+
+## Only ticks while a connection attempt is in flight.
+func _process(delta: float) -> void:
+	if not connecting:
+		set_process(false)
+		return
+	_connect_countdown -= delta
+	if _connect_countdown <= 0.0:
+		_give_up_connecting()
+
+
+func _give_up_connecting() -> void:
+	connecting = false
+	set_process(false)
+	leave()
+	last_error = "no answer from %s after %d s" % [_connect_address, int(CONNECT_TIMEOUT)]
+	Journal.warn("net", last_error)
+	connection_failed.emit()
+
+
+## The host being dialled, for the waiting screen.
+func connect_address() -> String:
+	return _connect_address
 
 
 func is_online() -> bool:
@@ -74,11 +108,17 @@ func join(address: String, port: int = DEFAULT_PORT) -> bool:
 	multiplayer.multiplayer_peer = peer
 	role = Role.CLIENT
 	players = {}
-	Journal.info("net", "Connecting to %s:%d" % [address, port])
+	connecting = true
+	_connect_address = address
+	_connect_countdown = CONNECT_TIMEOUT
+	set_process(true)
+	Journal.info("net", "Connecting to %s:%d (giving up after %d s)" % [address, port, int(CONNECT_TIMEOUT)])
 	return true
 
 
 func leave() -> void:
+	connecting = false
+	set_process(false)
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null
@@ -126,6 +166,8 @@ func _on_peer_disconnected(id: int) -> void:
 
 
 func _on_connected() -> void:
+	connecting = false
+	set_process(false)
 	players[multiplayer.get_unique_id()] = {"name": "you"}
 	Journal.info("net", "Connected as player %d" % multiplayer.get_unique_id())
 	connected_to_host.emit()
@@ -148,7 +190,9 @@ func _receive_roster(ids: Array) -> void:
 
 
 func _on_connection_failed() -> void:
-	last_error = "the host did not answer"
+	connecting = false
+	set_process(false)
+	last_error = "no answer from %s" % _connect_address
 	Journal.warn("net", "Connection failed")
 	role = Role.OFFLINE
 	connection_failed.emit()
