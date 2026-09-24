@@ -44,6 +44,7 @@ var _built_steps := -1
 var _sent_flash := -1.0
 var _sent_boost := -1.0
 var _sent_slow := -1.0
+var _sent_phase := -1.0
 
 
 func _ready() -> void:
@@ -56,6 +57,8 @@ func _ready() -> void:
 	_material.set_shader_parameter("spark_color", GameConfig.SPARK_COLOR)
 	_material.set_shader_parameter("frost_color", GameConfig.FROST_COLOR)
 	_material.set_shader_parameter("frost_pale_color", GameConfig.FROST_PALE_COLOR)
+	_material.set_shader_parameter("phase_color", GameConfig.PHASE_COLOR)
+	_material.set_shader_parameter("phase_pale_color", GameConfig.PHASE_PALE_COLOR)
 	material_override = _material
 	_apply_quality()
 
@@ -100,9 +103,13 @@ func set_palette(head: Color, body: Color, tail: Color) -> void:
 
 
 ## How strongly the lightning and the frost show, each 0 to 1.
-func set_effects(boost: float, slow: float) -> void:
+func set_effects(boost: float, slow: float, phase: float = 0.0) -> void:
 	var boost_value := clampf(boost, 0.0, 1.0)
 	var slow_value := clampf(slow, 0.0, 1.0)
+	var phase_value := clampf(phase, 0.0, 1.0)
+	if not is_equal_approx(phase_value, _sent_phase):
+		_sent_phase = phase_value
+		_material.set_shader_parameter("phase", phase_value)
 	if not is_equal_approx(boost_value, _sent_boost):
 		_sent_boost = boost_value
 		_material.set_shader_parameter("boost", boost_value)

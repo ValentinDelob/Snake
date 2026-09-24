@@ -13,7 +13,7 @@ extends RefCounted
 ## Injected key events go through the normal input pipeline, so the test
 ## exercises the same code path as a player.
 
-enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, PAUSE, FINISH }
+enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, GHOST, PAUSE, FINISH }
 
 const PAUSE_FRAMES := 30
 const MIN_ACCEPTABLE_FPS := 25.0
@@ -79,6 +79,13 @@ var quality_faces := {}
 ## frame pacing: limit -> did the engine take it, and both vsync states
 var fps_limits_seen := {}
 var vsync_states_seen := {}
+## the ghost ring: found, fired, and walked through a body with
+var ghost_collected := false
+var ghost_fired := false
+var ghost_passed_through := false
+var _ghost_requested := false
+var _ghost_curling := false
+
 ## the arena the round was played on
 var arena_seen := Vector2.ZERO
 ## debug readout: the frame rate it showed, and whether it went away again
@@ -330,6 +337,8 @@ func _on_play(game) -> void:
 			_run_score_up(game, now)
 		Phase.SCORE_DOWN:
 			_run_score_down(game, now)
+		Phase.GHOST:
+			_run_ghost(game, now)
 		Phase.PAUSE:
 			_run_pause()
 		Phase.FINISH:
@@ -340,15 +349,19 @@ func _on_play(game) -> void:
 ## whether any of them sits where a snake starts or sets off.
 func _survey_rocks(game) -> void:
 	var game_match = game.game_match
-	rocks_seen = maxi(rocks_seen, game_match.obstacles.size())
-	lane_kept = game_match.lane_length
+	var laid: Array = []
 	for rock: Dictionary in game_match.obstacles:
+		if not rock.get("planted", false):
+			laid.append(rock)
+	rocks_seen = maxi(rocks_seen, laid.size())
+	lane_kept = game_match.lane_length
+	for rock: Dictionary in laid:
 		rock_smallest = minf(rock_smallest, rock["radius"])
 		rock_largest = maxf(rock_largest, rock["radius"])
 
 	for id: int in game_match.spawns:
 		var pose: Array = game_match.spawns[id]
-		for rock: Dictionary in game_match.obstacles:
+		for rock: Dictionary in laid:
 			if rock["position"].distance_to(pose[0]) < rock["radius"] + 1.0:
 				spawn_lanes_clear = false
 				Journal.warn("selftest", "a rock sits on the spawn of player %d" % id)
@@ -400,6 +413,13 @@ func _on_round_restart(game) -> void:
 		_loss_crate_requested = false
 		_floor_stage = 0
 		score_card_loss = 0
+	if phase == Phase.GHOST and not ghost_passed_through:
+		if _ghost_curling:
+			release(KEY_LEFT)
+			_ghost_curling = false
+		_ghost_requested = false
+		ghost_collected = false
+		ghost_fired = false
 	if phase == Phase.FINISH and not rock_death:
 		# The rock went with the old arena: the next round needs a new one.
 		_rock_dropped = false
@@ -645,7 +665,7 @@ func _run_score_down(game, now: float) -> void:
 		Journal.info("selftest", "score bottomed out at 0, body back to %.2f units" % [
 			length_after_floor,
 		])
-		_enter_phase(Phase.PAUSE, now)
+		_enter_phase(Phase.GHOST, now)
 		return
 
 	if not _loss_crate_requested:
@@ -678,6 +698,74 @@ func _run_score_down(game, now: float) -> void:
 		])
 	_floor_stage = 1
 	_loss_crate_requested = false
+
+
+## The ghost ring, start to finish: lay one in the path, pick it up, fire
+## it, then curl the snake hard into its own body and watch it come out the
+## other side alive. The score is topped up first so the body is long
+## enough to cross itself inside the one second the ring lasts.
+func _run_ghost(game, now: float) -> void:
+	var snake = game.local_snake()
+	if snake == null:
+		return
+
+	# The ring will not go into a slot that is already full, so whatever is
+	# in there is spent first.
+	if snake.carried != SnakeWorld.Item.NONE and snake.carried != SnakeWorld.Item.PHASE:
+		Journal.info("selftest", "emptying the slot before the ghost ring")
+		press(KEY_SPACE)
+		release(KEY_SPACE)
+		return
+
+	if not _ghost_requested:
+		if snake.score < 18:
+			snake.add_score(18 - snake.score)
+			snake.body_length = snake.target_body_length
+		Journal.info("selftest", "dropping the ghost ring in the path")
+		game.game_match.drop_at(SnakeWorld.Ground.PHASE, _ahead_of(snake))
+		_ghost_requested = true
+		_phase_started = now
+		return
+
+	if not ghost_collected:
+		if snake.carried == SnakeWorld.Item.PHASE:
+			ghost_collected = true
+			Journal.info("selftest", "ghost ring is in the slot")
+		elif now - _phase_started > 8.0:
+			_ghost_requested = false      # it wandered off: lay another
+		return
+
+	if not ghost_fired:
+		Journal.info("selftest", "firing the ghost ring and curling into the body")
+		_saved_agent = game.agent
+		game.agent = null
+		press(KEY_SPACE)
+		release(KEY_SPACE)
+		press(KEY_LEFT)
+		_ghost_curling = true
+		ghost_fired = snake.effect == SnakeWorld.Item.PHASE
+		_phase_started = now
+		return
+
+	# The proof: the head is inside its own body and the snake is still
+	# going. Without the ring that is a death, every time.
+	if snake.phasing() and snake.alive and snake.hits_body(snake.head_position):
+		if not ghost_passed_through:
+			ghost_passed_through = true
+			Journal.info("selftest", "head is inside the body and still alive")
+
+	if not snake.phasing():
+		if _ghost_curling:
+			release(KEY_LEFT)
+			game.agent = _saved_agent
+			_ghost_curling = false
+		if ghost_passed_through or now - _phase_started > 6.0:
+			Journal.info("selftest", "ghost ring spent, walked through: %s" % ghost_passed_through)
+			_enter_phase(Phase.PAUSE, now)
+		else:
+			_ghost_requested = false      # try again with a fresh ring
+			ghost_collected = false
+			ghost_fired = false
 
 
 func _run_pause() -> void:
@@ -805,12 +893,13 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
 		str(quality_faces), fps_limits_seen.size(), vsync_states_seen.size(),
 		debug_fps_shown, debug_hidden,
+		ghost_collected, ghost_fired, ghost_passed_through,
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
@@ -915,6 +1004,13 @@ func _verify_solo(stats: Dictionary) -> Array:
 			failures.append("the engine did not take the ceiling %s" % str(limit))
 	if vsync_states_seen.size() < 2:
 		failures.append("vsync was never seen both ways")
+	if not ghost_collected:
+		failures.append("the ghost ring never reached the slot")
+	elif not ghost_fired:
+		failures.append("firing the ghost ring did not start the effect")
+	elif not ghost_passed_through:
+		failures.append("the snake never walked through its own body")
+
 	if debug_fps_shown <= 0:
 		failures.append("the debug readout never counted a frame rate")
 	if not debug_hidden:

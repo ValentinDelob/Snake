@@ -279,6 +279,9 @@ func set_item(carried: int, effect: int, time_left: float, total: float) -> void
 	if effect == 2:
 		_boost_label.text = "SLOWED  %.1fs" % time_left
 		_boost_label.add_theme_color_override("font_color", GameConfig.FROST_COLOR)
+	elif effect == 5:
+		_boost_label.text = "GHOST  %.1fs" % time_left
+		_boost_label.add_theme_color_override("font_color", GameConfig.PHASE_COLOR)
 	elif effect == 1:
 		_boost_label.text = "BOOST  %.1fs" % time_left
 		_boost_label.add_theme_color_override("font_color", GameConfig.SPARK_COLOR)

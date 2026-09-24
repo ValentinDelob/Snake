@@ -169,7 +169,7 @@ func _parse_arguments() -> void:
 				# has it, how many frames still miss their slot?
 				_profiler = FrameProfiler.new()
 	if _max_steps <= 0:
-		_max_steps = int(GameConfig.SIM_HZ * 60.0)  # one minute of simulation
+		_max_steps = int(GameConfig.SIM_HZ * 100.0)  # long enough for the whole script
 	if _driver != null:
 		_driver.expect_timeout = _pending_expect_timeout
 		PlayerProfile.use_path("user://selftest_profile.json")
@@ -379,6 +379,9 @@ func _on_item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 	var crate := kind == SnakeWorld.Ground.MYSTERY
 	var color := GameConfig.SPARK_COLOR
 	var told := "collected a speed bolt"
+	if kind == SnakeWorld.Ground.PHASE:
+		color = GameConfig.PHASE_COLOR
+		told = "picked up the ghost ring, stored in the slot"
 	if crate:
 		match roll:
 			SnakeWorld.Item.SLOW:
@@ -892,10 +895,14 @@ func _use_item() -> void:
 	if Session.role == Session.Role.CLIENT:
 		_request_item.rpc_id(1)
 		return
+	var fired: SnakeWorld.Item = snake.carried
 	if not snake.use_item():
 		Journal.debug("game", "Space pressed with an empty item slot")
 		return
-	Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
+	if fired == SnakeWorld.Item.PHASE:
+		Journal.info("game", "Ghost ring fired: %.0fs through bodies" % GameConfig.PHASE_DURATION)
+	else:
+		Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
 
 
 func _cycle_camera() -> void:

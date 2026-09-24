@@ -17,6 +17,10 @@ var _floor_material: ShaderMaterial
 var _head_lamp: OmniLight3D
 var _bolt: MeshInstance3D
 var _bolt_lamp: OmniLight3D
+var _ghost: MeshInstance3D
+var _ghost_halo: MeshInstance3D
+var _ghost_lamp: OmniLight3D
+var _ghost_material: StandardMaterial3D
 var _crate: MeshInstance3D
 var _crate_lamp: OmniLight3D
 var _crate_material: StandardMaterial3D
@@ -72,7 +76,9 @@ func refresh(game_match: SnakeMatch, local_id: int, elapsed: float, flash: float
 		if not snake.alive:
 			continue
 		mesh.rebuild(snake, BODY_HEIGHT)
-		mesh.set_effects(snake.boost_intensity(), snake.slow_intensity())
+		mesh.set_effects(
+			snake.boost_intensity(), snake.slow_intensity(), snake.phase_intensity()
+		)
 		mesh.set_flash(flash if id == local_id else 0.0)
 		_place_eyes(visual["eyes"], snake)
 
@@ -182,6 +188,24 @@ func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 		_bolt_lamp.position = _bolt.position
 		# A slow throb, so the bolt catches the eye across a dark arena.
 		_bolt_lamp.light_energy = 0.9 + 0.35 * sin(elapsed * 3.0)
+
+	var has_ghost := game_match.has_ground(SnakeWorld.Ground.PHASE)
+	_ghost.visible = has_ghost
+	_ghost_halo.visible = has_ghost
+	_ghost_lamp.visible = has_ghost
+	if has_ghost:
+		var spot := game_match.ground_position(SnakeWorld.Ground.PHASE)
+		var bob := 0.9 + 0.14 * sin(elapsed * 2.2)
+		_ghost.position = Vector3(spot.x, bob, spot.y)
+		# Standing on edge and turning, so it catches the light from every
+		# camera in the game rather than only from above.
+		_ghost.rotation = Vector3(PI * 0.5, elapsed * 2.4, 0.0)
+		_ghost_halo.position = Vector3(spot.x, 0.12, spot.y)
+		_ghost_halo.rotation = Vector3(PI * 0.5, -elapsed * 1.1, 0.0)
+		var shine := 0.6 + 0.4 * sin(elapsed * 4.4)
+		_ghost_material.emission_energy_multiplier = 1.6 + 1.6 * shine
+		_ghost_lamp.position = Vector3(spot.x, bob + 0.3, spot.y)
+		_ghost_lamp.light_energy = 1.4 + 1.1 * shine
 
 	var has_crate := game_match.has_ground(SnakeWorld.Ground.MYSTERY)
 	_crate.visible = has_crate
@@ -398,6 +422,60 @@ func _build_props() -> void:
 	_bolt_lamp.shadow_enabled = false
 	_bolt_lamp.visible = false
 	add_child(_bolt_lamp)
+
+	# The ghost ring. It is the rarest thing on the arena, so it is also the
+	# brightest: a gold torus standing on edge inside a flat halo, under a
+	# light strong enough to be spotted from the far wall.
+	var ghost_mesh := TorusMesh.new()
+	ghost_mesh.inner_radius = 0.26
+	ghost_mesh.outer_radius = 0.42
+	ghost_mesh.rings = 18
+	ghost_mesh.ring_segments = 10
+
+	_ghost_material = StandardMaterial3D.new()
+	_ghost_material.albedo_color = GameConfig.PHASE_COLOR
+	_ghost_material.metallic = 0.4
+	_ghost_material.roughness = 0.2
+	_ghost_material.emission_enabled = true
+	_ghost_material.emission = GameConfig.PHASE_PALE_COLOR
+	_ghost_material.emission_energy_multiplier = 2.2
+
+	_ghost = MeshInstance3D.new()
+	_ghost.name = "GhostRing"
+	_ghost.mesh = ghost_mesh
+	_ghost.material_override = _ghost_material
+	_ghost.visible = false
+	add_child(_ghost)
+
+	var halo_mesh := TorusMesh.new()
+	halo_mesh.inner_radius = 0.6
+	halo_mesh.outer_radius = 0.78
+	halo_mesh.rings = 20
+	halo_mesh.ring_segments = 6
+	var halo_material := StandardMaterial3D.new()
+	halo_material.albedo_color = Color(
+		GameConfig.PHASE_COLOR.r, GameConfig.PHASE_COLOR.g, GameConfig.PHASE_COLOR.b, 0.5
+	)
+	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+
+	_ghost_halo = MeshInstance3D.new()
+	_ghost_halo.name = "GhostHalo"
+	_ghost_halo.mesh = halo_mesh
+	_ghost_halo.material_override = halo_material
+	_ghost_halo.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+	_ghost_halo.visible = false
+	add_child(_ghost_halo)
+
+	_ghost_lamp = OmniLight3D.new()
+	_ghost_lamp.name = "GhostLamp"
+	_ghost_lamp.light_color = GameConfig.PHASE_COLOR
+	_ghost_lamp.light_energy = 2.0
+	_ghost_lamp.omni_range = 8.0
+	_ghost_lamp.shadow_enabled = false
+	_ghost_lamp.visible = false
+	add_child(_ghost_lamp)
 
 	var ring := TorusMesh.new()
 	ring.inner_radius = 0.34

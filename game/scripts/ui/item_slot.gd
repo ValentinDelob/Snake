@@ -11,8 +11,9 @@ const BOLT_OUTLINE := [
 	Vector2(-0.3, 1.0), Vector2(0.52, 0.02), Vector2(0.1, 0.02),
 ]
 
-## What is in the slot and what is running: 0 nothing, 1 speed, 2 slow,
-## mirroring SnakeWorld.Item so the HUD does not have to translate.
+## What is in the slot and what is running, mirroring SnakeWorld.Item so
+## the HUD does not have to translate: 0 nothing, 1 speed, 2 slow, 5 the
+## ghost ring.
 var carried := 0
 var effect := 0
 var effect_ratio := 0.0       # 1 when the effect starts, 0 when it ends
@@ -39,8 +40,15 @@ func set_state(carried_item: int, active_effect: int, ratio: float) -> void:
 	queue_redraw()
 
 
+const GHOST := 5
+
+
 func _effect_color() -> Color:
-	return GameConfig.FROST_COLOR if effect == 2 else GameConfig.BOOST_COLOR
+	if effect == 2:
+		return GameConfig.FROST_COLOR
+	if effect == GHOST or carried == GHOST:
+		return GameConfig.PHASE_COLOR
+	return GameConfig.BOOST_COLOR
 
 
 func _draw() -> void:
@@ -68,13 +76,23 @@ func _draw() -> void:
 		)
 
 	# The bolt itself
-	var bolt_color := GameConfig.DIM_COLOR
-	bolt_color.a = 0.35
+	var item_color := GameConfig.DIM_COLOR
+	item_color.a = 0.35
+	var showing: int = carried if carried != 0 else effect
+
+	# The ghost ring is drawn as a ring: nobody should have to remember
+	# which colour of lightning bolt means what.
+	if showing == GHOST:
+		if carried != 0 or effect != 0:
+			item_color = GameConfig.PHASE_COLOR.lerp(GameConfig.PHASE_PALE_COLOR, glow)
+		draw_arc(centre, radius * 0.46, 0.0, TAU, 32, item_color, 3.0, true)
+		return
+
 	if carried != 0:
-		bolt_color = GameConfig.BOOST_COLOR.lerp(GameConfig.SPARK_COLOR, glow * 0.7)
+		item_color = GameConfig.BOOST_COLOR.lerp(GameConfig.SPARK_COLOR, glow * 0.7)
 
 	var scale_factor := radius * 0.62
 	var points := PackedVector2Array()
 	for point: Vector2 in BOLT_OUTLINE:
 		points.append(centre + point * scale_factor)
-	draw_colored_polygon(points, bolt_color)
+	draw_colored_polygon(points, item_color)

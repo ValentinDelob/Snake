@@ -20,6 +20,9 @@ uniform vec3 frost_pale_color : source_color = vec3(0.85, 0.95, 1.0);
 uniform float boost : hint_range(0.0, 1.0) = 0.0;
 uniform float slow : hint_range(0.0, 1.0) = 0.0;
 uniform float flash : hint_range(0.0, 1.0) = 0.0;
+uniform float phase : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 phase_color : source_color = vec3(1.0, 0.93, 0.36);
+uniform vec3 phase_pale_color : source_color = vec3(1.0, 0.99, 0.82);
 uniform float bands = 7.0;
 uniform float band_speed = 2.2;
 uniform float scale_density = 42.0;
@@ -78,5 +81,16 @@ void fragment() {
 
 	emission *= 1.0 - slow * 0.6;
 	emission += frost_color * slow * 0.12;
+
+	// The ghost ring: for one second the snake is barely there. It turns
+	// gold, thins out until the floor shows through it, and the rim burns,
+	// so the second it lasts is unmistakable from any camera.
+	if (phase > 0.0) {
+		float shimmer = 0.5 + 0.5 * sin(along * 30.0 - TIME * 9.0);
+		vec3 ghost = mix(phase_color, phase_pale_color, shimmer);
+		ALBEDO = mix(ALBEDO, ghost, phase * 0.8);
+		emission += ghost * phase * (0.5 + rim * 1.6);
+		ALPHA = mix(1.0, 0.42, phase);
+	}
 	EMISSION = emission;
 }

@@ -14,10 +14,10 @@ extends RefCounted
 enum Outcome { MOVING, DEAD_WALL, DEAD_SELF, DEAD_OTHER, DEAD_ROCK }
 
 ## What an item does once it takes effect.
-enum Item { NONE, SPEED, SLOW, SCORE_UP, SCORE_DOWN }
+enum Item { NONE, SPEED, SLOW, SCORE_UP, SCORE_DOWN, PHASE }
 
 ## What can be lying on the arena.
-enum Ground { BOLT, MYSTERY }
+enum Ground { BOLT, MYSTERY, PHASE }
 
 ## Distance the head must travel before the path records another point.
 const PATH_SAMPLE := 0.06
@@ -217,7 +217,7 @@ func step(delta: float) -> Outcome:
 	if not is_inside(head_position):
 		kill(head_position)
 		return Outcome.DEAD_WALL
-	if hits_body(head_position):
+	if not phasing() and hits_body(head_position):
 		kill(head_position)
 		return Outcome.DEAD_SELF
 	return Outcome.MOVING
@@ -263,12 +263,29 @@ func use_item() -> bool:
 func start_effect(kind: Item) -> void:
 	# Score cards are settled the instant the crate opens: there is no
 	# effect to run down, so they never reach this.
-	if kind != Item.SPEED and kind != Item.SLOW:
-		return
+	match kind:
+		Item.SPEED:
+			effect_time_left = GameConfig.BOOST_DURATION
+		Item.SLOW:
+			effect_time_left = GameConfig.SLOW_DURATION
+		Item.PHASE:
+			effect_time_left = GameConfig.PHASE_DURATION
+		_:
+			return
 	effect = kind
-	effect_time_left = (
-		GameConfig.BOOST_DURATION if kind == Item.SPEED else GameConfig.SLOW_DURATION
-	)
+
+
+## While this runs the snake walks through bodies, its own and everybody
+## else's. Walls and rocks are as solid as ever.
+func phasing() -> bool:
+	return effect == Item.PHASE and effect_time_left > 0.0
+
+
+## How much of the ghost shows: full at the start, fading out with it.
+func phase_intensity() -> float:
+	if not phasing():
+		return 0.0
+	return clampf(effect_time_left / GameConfig.PHASE_DURATION, 0.0, 1.0)
 
 
 func boosting() -> bool:

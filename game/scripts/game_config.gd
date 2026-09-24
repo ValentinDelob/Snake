@@ -58,6 +58,15 @@ const SCORE_CARD_POINTS := 3
 
 ## The slow down. It never lies on the arena: it only comes out of a crate,
 ## and it is forced on the snake straight away.
+## The ghost ring: the rarest thing on the arena. It buys one second of
+## walking through bodies - yours and everybody else's - which is long
+## enough to cut a corner nobody else can cut, and short enough that it
+## has to be spent on purpose.
+const PHASE_RADIUS := 0.55
+const PHASE_FIRST_SPAWN := Vector2(35.0, 60.0)   # seconds, min and max
+const PHASE_RESPAWN := Vector2(55.0, 95.0)       # rarer still afterwards
+const PHASE_DURATION := 1.0
+
 const SLOW_DURATION := 5.0
 const SLOW_FACTOR := 0.5
 const SLOW_RAMP_DOWN := 0.5    # seconds to lose the speed
@@ -157,6 +166,8 @@ const EYE_COLOR := Color(0.04, 0.08, 0.05)
 const BOOST_COLOR := Color(1.0, 0.86, 0.28)
 const SPARK_COLOR := Color(1.0, 0.98, 0.78)
 const MYSTERY_COLOR := Color(0.72, 0.45, 1.0)
+const PHASE_COLOR := Color(1.0, 0.93, 0.36)
+const PHASE_PALE_COLOR := Color(1.0, 0.99, 0.82)
 const FROST_COLOR := Color(0.48, 0.78, 1.0)
 const FROST_PALE_COLOR := Color(0.85, 0.95, 1.0)
 

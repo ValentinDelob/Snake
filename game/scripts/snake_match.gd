@@ -39,6 +39,7 @@ var elapsed := 0.0
 var _rng := RandomNumberGenerator.new()
 var _next_bolt_at := 0.0
 var _next_mystery_at := 0.0
+var _next_phase_at := 0.0
 var _forced_roll: SnakeWorld.Item = SnakeWorld.Item.NONE
 var _gap := GameConfig.OBSTACLE_GAP
 
@@ -94,6 +95,9 @@ func start() -> void:
 	)
 	_next_mystery_at = _rng.randf_range(
 		GameConfig.MYSTERY_FIRST_SPAWN.x, GameConfig.MYSTERY_FIRST_SPAWN.y
+	)
+	_next_phase_at = _rng.randf_range(
+		GameConfig.PHASE_FIRST_SPAWN.x, GameConfig.PHASE_FIRST_SPAWN.y
 	)
 
 	var ids: Array = snakes.keys()
@@ -284,6 +288,9 @@ func place_obstacle(position: Vector2, radius: float) -> void:
 		"radius": radius,
 		"spin": _rng.randf() * TAU,
 		"sides": 6,
+		# Marked, so a check on how the arena was laid out does not judge a
+		# rock the test dropped in front of the snake on purpose.
+		"planted": true,
 	})
 
 
@@ -324,8 +331,11 @@ func step(delta: float) -> void:
 	_check_end()
 
 
-## Running into somebody else is as fatal as running into yourself.
+## Running into somebody else is as fatal as running into yourself, unless
+## the ghost ring is running: then you go straight through.
 func _check_bite(id: int, snake: SnakeWorld) -> void:
+	if snake.phasing():
+		return
 	for other_id: int in snakes:
 		if other_id == id:
 			continue
@@ -349,14 +359,11 @@ func _check_food(id: int, snake: SnakeWorld) -> void:
 func _check_ground(id: int, snake: SnakeWorld) -> void:
 	for index in range(ground.size() - 1, -1, -1):
 		var item: Dictionary = ground[index]
-		var radius: float = (
-			GameConfig.BOOST_RADIUS if item["kind"] == SnakeWorld.Ground.BOLT
-			else GameConfig.MYSTERY_RADIUS
-		)
+		var radius: float = _ground_radius(item["kind"])
 		if snake.head_position.distance_to(item["position"]) > GameConfig.SNAKE_RADIUS + radius:
 			continue
-		if item["kind"] == SnakeWorld.Ground.BOLT and snake.carried != SnakeWorld.Item.NONE:
-			continue    # the slot is busy: leave the bolt where it lies
+		if item["kind"] != SnakeWorld.Ground.MYSTERY and snake.carried != SnakeWorld.Item.NONE:
+			continue    # the slot is busy: leave it where it lies
 
 		ground.remove_at(index)
 		var roll := SnakeWorld.Item.SPEED
@@ -364,6 +371,12 @@ func _check_ground(id: int, snake: SnakeWorld) -> void:
 			snake.carried = SnakeWorld.Item.SPEED
 			_next_bolt_at = elapsed + _rng.randf_range(
 				GameConfig.BOOST_RESPAWN.x, GameConfig.BOOST_RESPAWN.y
+			)
+		elif item["kind"] == SnakeWorld.Ground.PHASE:
+			roll = SnakeWorld.Item.PHASE
+			snake.carried = SnakeWorld.Item.PHASE
+			_next_phase_at = elapsed + _rng.randf_range(
+				GameConfig.PHASE_RESPAWN.x, GameConfig.PHASE_RESPAWN.y
 			)
 		else:
 			roll = _roll_mystery()
@@ -402,6 +415,8 @@ func _update_spawns() -> void:
 		drop(SnakeWorld.Ground.BOLT)
 	if not has_ground(SnakeWorld.Ground.MYSTERY) and elapsed >= _next_mystery_at:
 		drop(SnakeWorld.Ground.MYSTERY)
+	if not has_ground(SnakeWorld.Ground.PHASE) and elapsed >= _next_phase_at:
+		drop(SnakeWorld.Ground.PHASE)
 
 
 ## The round is over when at most one snake is left standing.
@@ -421,6 +436,16 @@ func _check_end() -> void:
 
 
 # --------------------------------------------------------------------------- #
+static func _ground_radius(kind: SnakeWorld.Ground) -> float:
+	match kind:
+		SnakeWorld.Ground.BOLT:
+			return GameConfig.BOOST_RADIUS
+		SnakeWorld.Ground.PHASE:
+			return GameConfig.PHASE_RADIUS
+		_:
+			return GameConfig.MYSTERY_RADIUS
+
+
 func has_ground(kind: SnakeWorld.Ground) -> bool:
 	for item: Dictionary in ground:
 		if item["kind"] == kind:
@@ -440,10 +465,7 @@ func drop(kind: SnakeWorld.Ground, forced: SnakeWorld.Item = SnakeWorld.Item.NON
 		_forced_roll = forced
 	if has_ground(kind):
 		return
-	var margin: float = (
-		GameConfig.BOOST_RADIUS if kind == SnakeWorld.Ground.BOLT
-		else GameConfig.MYSTERY_RADIUS
-	) + 1.0
+	var margin := _ground_radius(kind) + 1.0
 	ground.append({"kind": kind, "position": free_spot(margin, 4.5)})
 
 
@@ -456,10 +478,7 @@ func drop_at(kind: SnakeWorld.Ground, position: Vector2, forced: SnakeWorld.Item
 	for index in range(ground.size() - 1, -1, -1):
 		if ground[index]["kind"] == kind:
 			ground.remove_at(index)
-	var margin: float = (
-		GameConfig.BOOST_RADIUS if kind == SnakeWorld.Ground.BOLT
-		else GameConfig.MYSTERY_RADIUS
-	) + 1.0
+	var margin := _ground_radius(kind) + 1.0
 	ground.append({"kind": kind, "position": Vector2(
 		clampf(position.x, margin, width - margin),
 		clampf(position.y, margin, height - margin)
