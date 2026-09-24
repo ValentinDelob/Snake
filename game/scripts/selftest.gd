@@ -12,7 +12,7 @@ extends RefCounted
 ## The run is a list of phases rather than absolute times: if the snake dies
 ## halfway through, the driver retries and picks the phase back up.
 
-enum Phase { CAMERAS, TURNS, BOOST, PAUSE, FINISH }
+enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, PAUSE, FINISH }
 
 const PAUSE_FRAMES := 30
 const MIN_ACCEPTABLE_FPS := 25.0
@@ -47,6 +47,12 @@ var boost_fired := false
 var max_multiplier := 1.0
 var multiplier_after_boost := -1.0
 
+## The crate: a bonus goes to the slot, a curse is swallowed on the spot.
+var crate_bonus_in_slot := false
+var crate_malus_forced := false
+var min_multiplier := 1.0
+var multiplier_after_slow := -1.0
+
 var _phase_started := 0.0
 var _done_marks := {}
 var _entered_play := false
@@ -64,6 +70,11 @@ var _saved_agent: GreedyAgent = null
 # boost test
 var _bolt_requested := false
 var _boost_fired_at := 0.0
+
+# crate tests
+var _bonus_crate_requested := false
+var _malus_crate_requested := false
+var _slow_started_at := -1.0
 
 ## True once the body has been caught mid-growth, which is what proves the
 ## snake lengthens progressively instead of jumping to its new size.
@@ -132,6 +143,10 @@ func _on_play(game) -> void:
 			_run_turns(game, now)
 		Phase.BOOST:
 			_run_boost(game, now)
+		Phase.CRATE_BONUS:
+			_run_crate_bonus(game, now)
+		Phase.CRATE_MALUS:
+			_run_crate_malus(game, now)
 		Phase.PAUSE:
 			_run_pause()
 		Phase.FINISH:
@@ -157,6 +172,11 @@ func _on_round_restart(game) -> void:
 		# drop another bolt and do it again rather than accept a half ramp.
 		_bolt_requested = false
 		boost_fired = false
+	if phase == Phase.CRATE_BONUS and not crate_bonus_in_slot:
+		_bonus_crate_requested = false
+	if phase == Phase.CRATE_MALUS and multiplier_after_slow < 0.0:
+		_malus_crate_requested = false
+		_slow_started_at = -1.0
 
 
 func _enter_phase(next_phase: Phase, now: float) -> void:
@@ -226,13 +246,13 @@ func _run_boost(game, now: float) -> void:
 		return
 
 	if not boost_fired:
-		if world.carried_item:
+		if world.carried != SnakeWorld.Item.NONE:
 			Journal.info("selftest", "bolt in the slot, firing it with SPACE")
 			boost_fired = true
 			_boost_fired_at = now
 			press(KEY_SPACE)
 			release(KEY_SPACE)
-		elif not world.pickup_on_arena:
+		elif not world.has_ground(SnakeWorld.Ground.BOLT):
 			_bolt_requested = false   # the round restarted: drop another one
 		return
 
@@ -240,6 +260,53 @@ func _run_boost(game, now: float) -> void:
 		multiplier_after_boost = world.speed_multiplier
 		Journal.info("selftest", "boost finished: peak x%.2f, back to x%.2f" % [
 			max_multiplier, multiplier_after_boost,
+		])
+		_enter_phase(Phase.CRATE_BONUS, now)
+
+
+## A crate rigged to hold a bonus: it must land in the slot, not fire itself.
+func _run_crate_bonus(game, now: float) -> void:
+	var world: SnakeWorld = game.world
+	if not _bonus_crate_requested:
+		Journal.info("selftest", "dropping a crate rigged with a bonus")
+		world.spawn_mystery_now(SnakeWorld.Item.SPEED)
+		_bonus_crate_requested = true
+		return
+
+	if (
+		world.last_pickup_kind == SnakeWorld.Ground.MYSTERY
+		and world.last_roll == SnakeWorld.Item.SPEED
+		and world.carried == SnakeWorld.Item.SPEED
+	):
+		crate_bonus_in_slot = true
+		Journal.info("selftest", "crate bonus went to the slot, as it should")
+		_enter_phase(Phase.CRATE_MALUS, now)
+	elif not world.has_ground(SnakeWorld.Ground.MYSTERY):
+		_bonus_crate_requested = false    # the round restarted: try again
+
+
+## A crate rigged to hold the curse: it must apply itself, with no choice.
+func _run_crate_malus(game, now: float) -> void:
+	var world: SnakeWorld = game.world
+	if not _malus_crate_requested:
+		Journal.info("selftest", "dropping a crate rigged with the slow down")
+		world.spawn_mystery_now(SnakeWorld.Item.SLOW)
+		_malus_crate_requested = true
+		return
+
+	if _slow_started_at < 0.0:
+		if world.effect == SnakeWorld.Item.SLOW:
+			crate_malus_forced = true
+			_slow_started_at = now
+			Journal.info("selftest", "crate curse forced itself on the snake")
+		elif not world.has_ground(SnakeWorld.Ground.MYSTERY):
+			_malus_crate_requested = false
+		return
+
+	if now - _slow_started_at >= GameConfig.SLOW_DURATION + GameConfig.SLOW_RAMP_UP + 0.5:
+		multiplier_after_slow = world.speed_multiplier
+		Journal.info("selftest", "slow down finished: floor x%.2f, back to x%.2f" % [
+			min_multiplier, multiplier_after_slow,
 		])
 		_enter_phase(Phase.PAUSE, now)
 
@@ -252,13 +319,14 @@ func _run_pause() -> void:
 
 func _watch_world(game, now: float) -> void:
 	var world: SnakeWorld = game.world
-	if world.carried_item and not boost_collected:
+	if world.carried != SnakeWorld.Item.NONE and not boost_collected:
 		Journal.info("selftest", "speed bolt collected")
 		boost_collected = true
 	if boost_collected and not pickup_flash_seen and game.board_view().flash_active():
 		Journal.info("selftest", "pickup effect playing")
 		pickup_flash_seen = true
 	max_multiplier = maxf(max_multiplier, world.speed_multiplier)
+	min_multiplier = minf(min_multiplier, world.speed_multiplier)
 
 	if world.body_length < world.target_body_length - 0.01:
 		if not _growth_observed:
@@ -361,6 +429,17 @@ func verify(game) -> Array:
 		failures.append("the speed bolt was never collected")
 	if boost_collected and not pickup_flash_seen:
 		failures.append("collecting the bolt played no effect")
+	if not crate_bonus_in_slot:
+		failures.append("a crate bonus never reached the item slot")
+	if not crate_malus_forced:
+		failures.append("a crate curse was never forced on the snake")
+	elif min_multiplier > GameConfig.SLOW_FACTOR + 0.05:
+		failures.append("the slow down only reached x%.2f" % min_multiplier)
+	elif multiplier_after_slow < 0.0:
+		failures.append("the slow down never ran to completion")
+	elif absf(multiplier_after_slow - 1.0) > 0.05:
+		failures.append("speed stayed at x%.2f after the slow down" % multiplier_after_slow)
+
 	if not boost_fired:
 		failures.append("the speed boost was never fired")
 	elif max_multiplier < GameConfig.BOOST_FACTOR - 0.05:

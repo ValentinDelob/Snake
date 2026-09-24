@@ -150,15 +150,19 @@ func set_stats(score: int, best: int, mode_text: String) -> void:
 	_mode_chip.text = mode_text
 
 
-## Item slot state: what is carried, and the countdown while it burns.
-func set_item(carried: bool, boost_left: float, boost_total: float) -> void:
-	var boosting := boost_left > 0.0
-	_item_slot.set_state(carried, boosting, boost_left / maxf(boost_total, 0.001))
-	_item_hint.visible = carried and not boosting
-	if boosting:
-		_boost_label.text = "BOOST  %.1fs" % boost_left
+## Item slot state: what is carried, and the effect currently running.
+## Kinds mirror SnakeWorld.Item: 0 none, 1 speed, 2 slow.
+func set_item(carried: int, effect: int, time_left: float, total: float) -> void:
+	_item_slot.set_state(carried, effect, time_left / maxf(total, 0.001))
+	_item_hint.visible = carried != 0 and effect == 0
+
+	if effect == 2:
+		_boost_label.text = "SLOWED  %.1fs" % time_left
+		_boost_label.add_theme_color_override("font_color", GameConfig.FROST_COLOR)
+	elif effect == 1:
+		_boost_label.text = "BOOST  %.1fs" % time_left
 		_boost_label.add_theme_color_override("font_color", GameConfig.SPARK_COLOR)
-	elif carried:
+	elif carried != 0:
 		_boost_label.text = ""
 	else:
 		_boost_label.text = "no item"
@@ -231,14 +235,14 @@ func _build_overlay() -> void:
 func show_menu(best: int, games: int) -> void:
 	_title.text = "SNAKE 3D"
 	_title.add_theme_color_override("font_color", GameConfig.SNAKE_HEAD_COLOR)
-	_subtitle.text = "hold LEFT or RIGHT to steer - the snake never stops"
+	_subtitle.text = "grab the bolt for speed - the crate is a gamble"
 	_set_chips([
 		["BEST", str(best), GameConfig.ACCENT_COLOR],
 		["GAMES", str(games), GameConfig.TEXT_COLOR],
 	])
 	_set_call_to_action("ENTER", "play")
 	_set_hints([
-		[["SPACE"], "fire the speed boost"],
+		[["SPACE"], "fire the item you carry"],
 		[["C", "V"], "camera  /  flat view"],
 		[["P", "ESC"], "pause  /  quit"],
 	])

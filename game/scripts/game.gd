@@ -10,6 +10,9 @@ enum State { MENU, PLAY, PAUSE, GAMEOVER }
 
 const STATE_NAMES := ["menu", "play", "pause", "gameover"]
 
+## Keys are ignored for a moment after the window opens.
+const STARTUP_INPUT_DELAY := 0.3
+
 ## Held keys steer continuously: -1 turns left, +1 turns right.
 const TURN_KEYS := {
 	KEY_LEFT: -1.0,
@@ -51,7 +54,9 @@ var _seed := 0
 var _max_steps := 0
 var _held_turns := {}
 var _last_record := false
-var _was_boosting := false
+var _was_affected := false
+## Demo crates alternate between the bonus and the curse, so both can be seen.
+var _demo_crate_bonus := false
 
 
 # --------------------------------------------------------------------------- #
@@ -144,7 +149,11 @@ func play_time() -> float:
 
 
 func _refresh_item_slot() -> void:
-	_hud.set_item(world.carried_item, world.boost_time_left, GameConfig.BOOST_DURATION)
+	var total: float = (
+		GameConfig.BOOST_DURATION if world.effect == SnakeWorld.Item.SPEED
+		else GameConfig.SLOW_DURATION
+	)
+	_hud.set_item(world.carried, world.effect, world.effect_time_left, total)
 
 
 func _use_item() -> void:
@@ -152,6 +161,28 @@ func _use_item() -> void:
 		Journal.debug("game", "Space pressed with an empty item slot")
 		return
 	Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
+
+
+func _report_pickup() -> void:
+	var crate := world.last_pickup_kind == SnakeWorld.Ground.MYSTERY
+	var color := GameConfig.SPARK_COLOR
+	if crate:
+		color = (
+			GameConfig.FROST_COLOR if world.last_roll == SnakeWorld.Item.SLOW
+			else GameConfig.MYSTERY_COLOR
+		)
+	_board.play_pickup_flash(world.last_pickup_position, _elapsed, color)
+
+	if not crate:
+		Journal.info("game", "Speed bolt collected at (%.1f,%.1f)" % [
+			world.last_pickup_position.x, world.last_pickup_position.y,
+		])
+	elif world.last_roll == SnakeWorld.Item.SLOW:
+		Journal.info("game", "Crate opened: slow down, forced on the snake for %.0fs" % [
+			GameConfig.SLOW_DURATION,
+		])
+	else:
+		Journal.info("game", "Crate opened: speed boost, stored in the slot")
 
 
 func _advance() -> void:
@@ -164,13 +195,10 @@ func _advance() -> void:
 	stats["steps"] += 1
 
 	if world.picked_up_this_step:
-		_board.play_pickup_flash(world.pickup, _elapsed)
-		Journal.info("game", "Speed bolt collected at (%.1f,%.1f)" % [
-			world.pickup.x, world.pickup.y,
-		])
-	if _was_boosting and not world.boosting():
-		Journal.info("game", "Boost over, back to cruising speed")
-	_was_boosting = world.boosting()
+		_report_pickup()
+	if _was_affected and world.effect == SnakeWorld.Item.NONE:
+		Journal.info("game", "Effect over, back to cruising speed")
+	_was_affected = world.effect != SnakeWorld.Item.NONE
 
 	if outcome == SnakeWorld.Outcome.ATE:
 		_flash = 1.0
@@ -220,7 +248,7 @@ func _start_game() -> void:
 	_flash = 0.0
 	_play_time = 0.0
 	_held_turns.clear()
-	_was_boosting = false
+	_was_affected = false
 	_camera.set_preview(false)
 	_camera.reset()
 	_hud.hide_overlay()
@@ -265,6 +293,10 @@ func _game_over(outcome: SnakeWorld.Outcome) -> void:
 # --------------------------------------------------------------------------- #
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
+		return
+	# A keystroke left over from whatever launched the game would otherwise
+	# skip the menu before the player has seen it.
+	if _elapsed < STARTUP_INPUT_DELAY:
 		return
 	var key_event := event as InputEventKey
 	if key_event.echo:
@@ -317,6 +349,23 @@ func _play_key(keycode: int) -> void:
 		_cycle_camera()
 	elif keycode == KEY_V:
 		_toggle_view()
+	elif _demo:
+		_demo_key(keycode)
+
+
+## Demo mode doubles as a showroom: drop items where you want them.
+func _demo_key(keycode: int) -> void:
+	if keycode == KEY_B:
+		world.spawn_pickup_now()
+		Journal.info("game", "Demo: a bolt dropped on request")
+	elif keycode == KEY_N:
+		_demo_crate_bonus = not _demo_crate_bonus
+		world.spawn_mystery_now(
+			SnakeWorld.Item.SPEED if _demo_crate_bonus else SnakeWorld.Item.SLOW
+		)
+		Journal.info("game", "Demo: a crate dropped, rigged with %s" % [
+			"a bonus" if _demo_crate_bonus else "the curse",
+		])
 
 
 func _cycle_camera() -> void:
@@ -359,13 +408,15 @@ func request_quit(reason: String) -> void:
 		for failure: String in failures:
 			Journal.error("selftest", "check failed: %s" % failure)
 		exit_code = 0 if failures.is_empty() else 1
-		Journal.info("selftest", "SELFTEST %s: states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+		Journal.info("selftest", "SELFTEST %s: states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 			"PASS" if failures.is_empty() else "FAIL",
 			str(_driver.states_seen.keys()),
 			str(_driver.views_seen.keys()),
 			str(_driver.cameras_seen.keys()),
 			str(_driver.turns_seen.keys()),
 			_driver.max_multiplier, _driver.multiplier_after_boost,
+			_driver.min_multiplier, _driver.multiplier_after_slow,
+			_driver.crate_bonus_in_slot, _driver.crate_malus_forced,
 			stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 		])
 

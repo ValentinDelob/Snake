@@ -20,9 +20,13 @@ var _floor_material: ShaderMaterial
 var _head_lamp: OmniLight3D
 var _bolt: MeshInstance3D
 var _bolt_lamp: OmniLight3D
+var _crate: MeshInstance3D
+var _crate_lamp: OmniLight3D
+var _crate_material: StandardMaterial3D
 var _flash_ring: MeshInstance3D
 var _flash_material: StandardMaterial3D
 var _flash_time := -1.0
+var _flash_color := GameConfig.SPARK_COLOR
 
 
 func build(world: SnakeWorld) -> void:
@@ -39,11 +43,11 @@ func build(world: SnakeWorld) -> void:
 ## Reshape the snake and move the props to match the current world.
 func refresh(world: SnakeWorld, elapsed: float, flash: float) -> void:
 	_body.rebuild(world, BODY_HEIGHT)
-	_body.set_boost(world.boost_intensity(), elapsed)
+	_body.set_effects(world.boost_intensity(), world.slow_intensity())
 	_body.set_flash(flash)
 	_place_eyes(world)
 	_refresh_lighting(world)
-	_refresh_bolt(world, elapsed)
+	_refresh_ground(world, elapsed)
 	_refresh_flash(elapsed)
 
 	_food.position = Vector3(
@@ -68,26 +72,42 @@ func _refresh_lighting(world: SnakeWorld) -> void:
 	_head_lamp.light_energy = 0.15 + boost * 1.7
 
 
-## A bolt waiting on the arena: floating, spinning, hard to miss.
-func _refresh_bolt(world: SnakeWorld, elapsed: float) -> void:
-	_bolt.visible = world.pickup_on_arena
-	_bolt_lamp.visible = world.pickup_on_arena
-	if not world.pickup_on_arena:
-		return
-	_bolt.position = Vector3(
-		world.pickup.x,
-		0.75 + 0.1 * sin(elapsed * 2.6),
-		world.pickup.y
-	)
-	_bolt.rotation.y = elapsed * 1.4
-	_bolt_lamp.position = _bolt.position
-	# A slow throb, so the bolt catches the eye across a dark arena.
-	_bolt_lamp.light_energy = 0.9 + 0.35 * sin(elapsed * 3.0)
+## What waits on the arena: the bolt, and the crate that could be either.
+func _refresh_ground(world: SnakeWorld, elapsed: float) -> void:
+	var has_bolt := world.has_ground(SnakeWorld.Ground.BOLT)
+	_bolt.visible = has_bolt
+	_bolt_lamp.visible = has_bolt
+	if has_bolt:
+		var spot := world.ground_position(SnakeWorld.Ground.BOLT)
+		_bolt.position = Vector3(spot.x, 0.75 + 0.1 * sin(elapsed * 2.6), spot.y)
+		_bolt.rotation.y = elapsed * 1.4
+		_bolt_lamp.position = _bolt.position
+		# A slow throb, so the bolt catches the eye across a dark arena.
+		_bolt_lamp.light_energy = 0.9 + 0.35 * sin(elapsed * 3.0)
+
+	var has_crate := world.has_ground(SnakeWorld.Ground.MYSTERY)
+	_crate.visible = has_crate
+	_crate_lamp.visible = has_crate
+	if has_crate:
+		var spot := world.ground_position(SnakeWorld.Ground.MYSTERY)
+		_crate.position = Vector3(spot.x, 0.85 + 0.12 * sin(elapsed * 2.0), spot.y)
+		# Tilted back towards the cameras, which all look down at the arena,
+		# and turning slowly so the mark stays readable.
+		_crate.rotation = Vector3(-1.0, elapsed * 0.7, 0.0)
+		# The colour drifts: you cannot tell what is inside by looking at it.
+		var drift := 0.5 + 0.5 * sin(elapsed * 1.6)
+		var color := GameConfig.MYSTERY_COLOR.lerp(GameConfig.FROST_COLOR, drift)
+		_crate_material.albedo_color = color
+		_crate_material.emission = color
+		_crate_lamp.position = _crate.position
+		_crate_lamp.light_color = color
+		_crate_lamp.light_energy = 0.8 + 0.3 * sin(elapsed * 2.4)
 
 
-## Small, quick ring when the bolt is collected.
-func play_pickup_flash(at: Vector2, elapsed: float) -> void:
+## Small, quick ring where something was collected.
+func play_pickup_flash(at: Vector2, elapsed: float, color: Color = GameConfig.SPARK_COLOR) -> void:
 	_flash_time = elapsed
+	_flash_color = color
 	_flash_ring.position = Vector3(at.x, 0.55, at.y)
 	_flash_ring.visible = true
 
@@ -109,8 +129,7 @@ func _refresh_flash(elapsed: float) -> void:
 	var scale_value := 0.5 + ratio * 2.6
 	_flash_ring.scale = Vector3(scale_value, 1.0, scale_value)
 	_flash_material.albedo_color = Color(
-		GameConfig.SPARK_COLOR.r, GameConfig.SPARK_COLOR.g, GameConfig.SPARK_COLOR.b,
-		0.75 * (1.0 - ratio)
+		_flash_color.r, _flash_color.g, _flash_color.b, 0.75 * (1.0 - ratio)
 	)
 
 
@@ -222,6 +241,28 @@ func _build_actors() -> void:
 	_bolt.visible = false
 	add_child(_bolt)
 
+	_crate_material = StandardMaterial3D.new()
+	_crate_material.albedo_color = GameConfig.MYSTERY_COLOR
+	_crate_material.emission_enabled = true
+	_crate_material.emission = GameConfig.MYSTERY_COLOR
+	_crate_material.emission_energy_multiplier = 0.3
+
+	_crate = MeshInstance3D.new()
+	_crate.name = "MysteryCrate"
+	_crate.mesh = _build_question_mesh()
+	_crate.material_override = _crate_material
+	_crate.visible = false
+	add_child(_crate)
+
+	_crate_lamp = OmniLight3D.new()
+	_crate_lamp.name = "CrateLamp"
+	_crate_lamp.light_color = GameConfig.MYSTERY_COLOR
+	_crate_lamp.light_energy = 1.0
+	_crate_lamp.omni_range = 5.0
+	_crate_lamp.shadow_enabled = false
+	_crate_lamp.visible = false
+	add_child(_crate_lamp)
+
 	_bolt_lamp = OmniLight3D.new()
 	_bolt_lamp.name = "BoltLamp"
 	_bolt_lamp.light_color = GameConfig.BOOST_COLOR
@@ -249,48 +290,84 @@ func _build_actors() -> void:
 	add_child(_flash_ring)
 
 
-## A lightning bolt: a flat zigzag polygon given a bit of thickness.
+## A lightning bolt: a flat zigzag given a bit of thickness.
 func _build_bolt_mesh() -> ArrayMesh:
 	var outline := PackedVector2Array([
 		Vector2(0.16, 1.0), Vector2(-0.52, 0.06), Vector2(-0.12, 0.06),
 		Vector2(-0.3, -1.0), Vector2(0.52, -0.02), Vector2(0.1, -0.02),
 	])
-	var scale_factor := 0.46
-	for index in range(outline.size()):
-		outline[index] *= scale_factor
+	return _extrude([_scaled(outline, 0.46)], 0.09)
 
-	var triangles := Geometry2D.triangulate_polygon(outline)
+
+## A question mark, for the crate: the hook, the stem and the dot.
+func _build_question_mesh() -> ArrayMesh:
+	var hook := PackedVector2Array()
+	var outer := 0.52
+	var inner := 0.28
+	var steps := 14
+	# Outer edge of the hook, sweeping over the top from left to right.
+	for index in range(steps + 1):
+		var angle: float = lerpf(PI * 1.05, -PI * 0.28, float(index) / steps)
+		hook.append(Vector2(cos(angle) * outer, sin(angle) * outer))
+	# The stem drops from the end of the hook towards the dot.
+	hook.append(Vector2(0.12, -0.42))
+	hook.append(Vector2(-0.12, -0.42))
+	hook.append(Vector2(-0.12, -0.02))
+	# Inner edge, coming back the other way.
+	for index in range(steps + 1):
+		var angle: float = lerpf(-PI * 0.28, PI * 1.05, float(index) / steps)
+		hook.append(Vector2(cos(angle) * inner, sin(angle) * inner))
+
+	var dot := PackedVector2Array([
+		Vector2(-0.13, -0.58), Vector2(0.13, -0.58),
+		Vector2(0.13, -0.84), Vector2(-0.13, -0.84),
+	])
+	return _extrude([_scaled(hook, 0.95), _scaled(dot, 0.95)], 0.14)
+
+
+func _scaled(outline: PackedVector2Array, factor: float) -> PackedVector2Array:
+	var scaled := PackedVector2Array()
+	for point: Vector2 in outline:
+		scaled.append(point * factor)
+	return scaled
+
+
+## Turn flat polygons into a solid: two faces and a wall around each outline.
+func _extrude(outlines: Array, depth: float) -> ArrayMesh:
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
-	var depth := 0.09
 
-	# Front and back faces.
-	for face in range(2):
-		var z := depth if face == 0 else -depth
-		var normal := Vector3(0.0, 0.0, 1.0 if face == 0 else -1.0)
-		var index := 0
-		while index < triangles.size():
-			var corners := [triangles[index], triangles[index + 1], triangles[index + 2]]
-			if face == 1:
-				corners.reverse()
-			for corner: int in corners:
-				vertices.append(Vector3(outline[corner].x, outline[corner].y, z))
+	for outline: PackedVector2Array in outlines:
+		var triangles := Geometry2D.triangulate_polygon(outline)
+		if triangles.is_empty():
+			Journal.warn("board", "A shape could not be triangulated")
+			continue
+
+		for face in range(2):
+			var z := depth if face == 0 else -depth
+			var normal := Vector3(0.0, 0.0, 1.0 if face == 0 else -1.0)
+			var index := 0
+			while index < triangles.size():
+				var corners := [triangles[index], triangles[index + 1], triangles[index + 2]]
+				if face == 1:
+					corners.reverse()
+				for corner: int in corners:
+					vertices.append(Vector3(outline[corner].x, outline[corner].y, z))
+					normals.append(normal)
+				index += 3
+
+		for index in range(outline.size()):
+			var a: Vector2 = outline[index]
+			var b: Vector2 = outline[(index + 1) % outline.size()]
+			var edge := (b - a).normalized()
+			var normal := Vector3(edge.y, -edge.x, 0.0)
+			var quad := [
+				Vector3(a.x, a.y, depth), Vector3(b.x, b.y, depth), Vector3(b.x, b.y, -depth),
+				Vector3(a.x, a.y, depth), Vector3(b.x, b.y, -depth), Vector3(a.x, a.y, -depth),
+			]
+			for corner: Vector3 in quad:
+				vertices.append(corner)
 				normals.append(normal)
-			index += 3
-
-	# Sides.
-	for index in range(outline.size()):
-		var a: Vector2 = outline[index]
-		var b: Vector2 = outline[(index + 1) % outline.size()]
-		var edge := (b - a).normalized()
-		var normal := Vector3(edge.y, -edge.x, 0.0)
-		var quad := [
-			Vector3(a.x, a.y, depth), Vector3(b.x, b.y, depth), Vector3(b.x, b.y, -depth),
-			Vector3(a.x, a.y, depth), Vector3(b.x, b.y, -depth), Vector3(a.x, a.y, -depth),
-		]
-		for corner: Vector3 in quad:
-			vertices.append(corner)
-			normals.append(normal)
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)

@@ -34,6 +34,19 @@ const BOOST_FACTOR := 2.0                       # top speed multiplier
 const BOOST_RAMP_UP := 0.8                      # seconds to reach it
 const BOOST_RAMP_DOWN := 1.0                    # seconds to settle back
 
+## Mystery crate: same idea, but what comes out is a gamble.
+const MYSTERY_RADIUS := 0.55
+const MYSTERY_FIRST_SPAWN := Vector2(9.0, 15.0)
+const MYSTERY_RESPAWN := Vector2(18.0, 30.0)
+const MYSTERY_BONUS_CHANCE := 0.5
+
+## The slow down. It never lies on the arena: it only comes out of a crate,
+## and it is forced on the snake straight away.
+const SLOW_DURATION := 5.0
+const SLOW_FACTOR := 0.5
+const SLOW_RAMP_DOWN := 0.5    # seconds to lose the speed
+const SLOW_RAMP_UP := 1.0      # seconds to get it back
+
 ## Body mesh: a tube swept along the path the head travelled.
 const TUBE_RING_SPACING := 0.22   # distance between two rings of the tube
 const TUBE_RADIAL_SEGMENTS := 10  # vertices around the body
@@ -59,6 +72,9 @@ const EYE_COLOR := Color(0.04, 0.08, 0.05)
 
 const BOOST_COLOR := Color(1.0, 0.86, 0.28)
 const SPARK_COLOR := Color(1.0, 0.98, 0.78)
+const MYSTERY_COLOR := Color(0.72, 0.45, 1.0)
+const FROST_COLOR := Color(0.48, 0.78, 1.0)
+const FROST_PALE_COLOR := Color(0.85, 0.95, 1.0)
 
 const ACCENT_COLOR := Color(1.0, 0.82, 0.31)
 const DANGER_COLOR := Color(1.0, 0.35, 0.35)

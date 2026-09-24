@@ -14,8 +14,11 @@ uniform vec3 tail_color : source_color = vec3(0.0, 0.33, 0.18);
 uniform vec3 belly_color : source_color = vec3(0.78, 0.95, 0.7);
 uniform vec3 boost_color : source_color = vec3(1.0, 0.86, 0.28);
 uniform vec3 spark_color : source_color = vec3(1.0, 0.98, 0.78);
+uniform vec3 frost_color : source_color = vec3(0.48, 0.78, 1.0);
+uniform vec3 frost_pale_color : source_color = vec3(0.85, 0.95, 1.0);
 
 uniform float boost : hint_range(0.0, 1.0) = 0.0;
+uniform float slow : hint_range(0.0, 1.0) = 0.0;
 uniform float flash : hint_range(0.0, 1.0) = 0.0;
 uniform float bands = 7.0;
 uniform float band_speed = 2.2;
@@ -45,8 +48,16 @@ void fragment() {
 	float scales = sin(along * scale_density) * sin(around * TAU_ * 5.0);
 	base *= 0.97 + 0.03 * scales;
 
+	// Frost creeping over the skin while the snake is slowed: cold, patchy,
+	// and dull rather than shiny, so a curse never looks like a reward.
+	if (slow > 0.0) {
+		float patches = 0.5 + 0.5 * sin(along * 26.0 + around * TAU_ * 3.0);
+		float frost = clamp(slow * (0.45 + 0.55 * patches), 0.0, 1.0);
+		base = mix(base, mix(frost_color, frost_pale_color, patches), frost * 0.85);
+	}
+
 	ALBEDO = base;
-	ROUGHNESS = mix(0.55, 0.25, belly);
+	ROUGHNESS = mix(0.55, 0.25, belly) + slow * 0.3;
 	SPECULAR = 0.55;
 	METALLIC = 0.0;
 
@@ -65,5 +76,7 @@ void fragment() {
 	emission += electric * (spark * 1.45 + boost * 0.25);
 	ALBEDO = mix(ALBEDO, electric, clamp(spark * 0.45, 0.0, 1.0));
 
+	emission *= 1.0 - slow * 0.6;
+	emission += frost_color * slow * 0.12;
 	EMISSION = emission;
 }

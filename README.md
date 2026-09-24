@@ -83,18 +83,36 @@ Two shaders do the rest:
   shimmering, darkens towards the walls, and lights a pool of ground under
   the snake while it is boosted.
 
-Two small lights ride the props: one on the head, barely there normally and
-electric while the boost burns, and one on the bolt, throbbing so it catches
-the eye across a dark arena.
+Small lights ride the props: one on the head - barely there normally,
+electric while a boost burns, cold while the snake is frozen - one on the
+bolt and one on the crate, throbbing so they catch the eye across a dark
+arena.
+
+The game runs on the **Forward+ (Vulkan)** renderer. It used to use the
+OpenGL Compatibility renderer, until a run crashed inside the NVIDIA driver
+(`nvwgf2umx.dll`, access violation, confirmed in the Windows event log).
+Vulkan takes a completely different driver path; `gl_compatibility` is kept
+as the fallback method for machines without it.
 
 ### Items
 
-A lightning bolt shows up on the arena from time to time - rarely, and never
-more than one at a time. Running over it stores it in the item slot shown in
-the HUD (a small ring flashes where it was). Press **space** when you want
-it: lightning crackles along the whole body and the speed eases up to twice
-the cruising pace for seven seconds, then eases back down. Turning rate does
-not change, so a boost is as risky as it is fast.
+A **lightning bolt** shows up on the arena from time to time - rarely, and
+never more than one at a time. Running over it stores it in the item slot
+shown in the HUD. Press **space** when you want it: lightning crackles along
+the whole body and the speed eases up to twice the cruising pace for seven
+seconds, then eases back down. Turning rate does not change, so a boost is
+as risky as it is fast.
+
+A **crate** marked with a question mark turns up more rarely still, and it
+is a gamble: half the time it holds a speed boost, which goes to the slot
+for you to fire when you choose. The other half it holds the **slow down**,
+which is never offered and never lies on the arena - it is forced on the
+snake the moment the crate opens. Frost creeps over the body, the light
+around it turns cold and the speed halves for five seconds before easing
+back. The slot keeps whatever it was already holding.
+
+`--demo` also lets you drop items on request, `B` for a bolt and `N` for a
+crate, alternating between the bonus and the curse.
 
 The body is a single procedural tube rebuilt every frame: a ring of vertices
 is swept along the path the head travelled, from a rounded nose to a pointed

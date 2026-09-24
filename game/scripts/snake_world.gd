@@ -10,6 +10,12 @@ extends RefCounted
 
 enum Outcome { MOVING, ATE, DEAD_WALL, DEAD_SELF }
 
+## What an item does once it takes effect.
+enum Item { NONE, SPEED, SLOW }
+
+## What can be lying on the arena.
+enum Ground { BOLT, MYSTERY }
+
 ## Distance the head must travel before the path records another point.
 const PATH_SAMPLE := 0.06
 
@@ -24,19 +30,27 @@ var turn_input := 0.0       # -1 turn left, +1 turn right, 0 straight
 
 var food := Vector2.ZERO
 
-## The speed boost: one bolt at a time on the arena, one slot to carry it.
-var pickup := Vector2.ZERO
-var pickup_on_arena := false
-var carried_item := false
-var picked_up_this_step := false
-var boost_time_left := 0.0
+## What lies on the arena: at most one bolt and one crate, each on its own
+## timer. A crate hands out a random item, which may be a curse.
+var ground: Array = []              # [{ "kind": Ground, "position": Vector2 }]
+var carried: Item = Item.NONE       # the slot the player fires with space
+var effect: Item = Item.NONE        # what is currently running
+var effect_time_left := 0.0
 var speed_multiplier := 1.0
+
+## Set for one step when something is collected, for the flash and the logs.
+var picked_up_this_step := false
+var last_pickup_kind: Ground = Ground.BOLT
+var last_pickup_position := Vector2.ZERO
+var last_roll: Item = Item.NONE     # what the crate just handed out
 
 var score := 0
 var steps := 0
 var distance_travelled := 0.0
 var elapsed := 0.0
-var _next_pickup_at := 0.0
+var _next_bolt_at := 0.0
+var _next_mystery_at := 0.0
+var _forced_roll: Item = Item.NONE  # testing hook, see spawn_mystery_now()
 var alive := true
 var death_position := Vector2.ZERO
 
@@ -70,14 +84,20 @@ func reset() -> void:
 	distance_travelled = 0.0
 	alive = true
 	death_position = Vector2.ZERO
-	pickup_on_arena = false
-	carried_item = false
-	picked_up_this_step = false
-	boost_time_left = 0.0
+	ground = []
+	carried = Item.NONE
+	effect = Item.NONE
+	effect_time_left = 0.0
 	speed_multiplier = 1.0
+	picked_up_this_step = false
+	last_roll = Item.NONE
+	_forced_roll = Item.NONE
 	elapsed = 0.0
-	_next_pickup_at = _rng.randf_range(
+	_next_bolt_at = _rng.randf_range(
 		GameConfig.BOOST_FIRST_SPAWN.x, GameConfig.BOOST_FIRST_SPAWN.y
+	)
+	_next_mystery_at = _rng.randf_range(
+		GameConfig.MYSTERY_FIRST_SPAWN.x, GameConfig.MYSTERY_FIRST_SPAWN.y
 	)
 	# The snake is born already stretched out behind its head, otherwise the
 	# body would start piled up on the head and trigger self collision.
@@ -180,8 +200,8 @@ func step(delta: float) -> Outcome:
 	steps += 1
 	elapsed += delta
 	picked_up_this_step = false
-	_update_boost(delta)
-	_update_pickup_spawn()
+	_update_effect(delta)
+	_update_ground_spawns()
 	if body_length < target_body_length:
 		body_length = minf(
 			target_body_length, body_length + GameConfig.GROWTH_SPEED * delta
@@ -208,16 +228,7 @@ func step(delta: float) -> Outcome:
 		death_position = head_position
 		return Outcome.DEAD_SELF
 
-	if (
-		pickup_on_arena and not carried_item
-		and head_position.distance_to(pickup) < GameConfig.SNAKE_RADIUS + GameConfig.BOOST_RADIUS
-	):
-		pickup_on_arena = false
-		carried_item = true
-		picked_up_this_step = true
-		_next_pickup_at = elapsed + _rng.randf_range(
-			GameConfig.BOOST_RESPAWN.x, GameConfig.BOOST_RESPAWN.y
-		)
+	_collect_ground_items()
 
 	if head_position.distance_to(food) < GameConfig.SNAKE_RADIUS + GameConfig.FOOD_RADIUS:
 		score += 1
@@ -230,49 +241,155 @@ func step(delta: float) -> Outcome:
 
 ## Fire the carried item. Returns false when there is nothing to fire.
 func use_item() -> bool:
-	if not carried_item:
+	if carried == Item.NONE:
 		return false
-	carried_item = false
-	boost_time_left = GameConfig.BOOST_DURATION
+	var fired := carried
+	carried = Item.NONE
+	_start_effect(fired)
 	return true
 
 
+## A curse is not offered, it is applied: the snake swallows it on the spot.
+func _start_effect(kind: Item) -> void:
+	effect = kind
+	effect_time_left = (
+		GameConfig.BOOST_DURATION if kind == Item.SPEED else GameConfig.SLOW_DURATION
+	)
+
+
 func boosting() -> bool:
-	return boost_time_left > 0.0 or speed_multiplier > 1.001
+	return effect == Item.SPEED or speed_multiplier > 1.001
 
 
-## How much of the boost is currently applied, 0 to 1. Drives the visuals.
+func slowed() -> bool:
+	return effect == Item.SLOW or speed_multiplier < 0.999
+
+
+## How much of the boost shows, 0 to 1. Drives the visuals.
 func boost_intensity() -> float:
 	return clampf(
 		(speed_multiplier - 1.0) / maxf(0.001, GameConfig.BOOST_FACTOR - 1.0), 0.0, 1.0
 	)
 
 
-func _update_boost(delta: float) -> void:
-	if boost_time_left > 0.0:
-		boost_time_left = maxf(0.0, boost_time_left - delta)
-
-	# The speed eases in and out instead of snapping, in both directions.
-	var target := GameConfig.BOOST_FACTOR if boost_time_left > 0.0 else 1.0
-	var ramp := (GameConfig.BOOST_FACTOR - 1.0) / (
-		GameConfig.BOOST_RAMP_UP if target > speed_multiplier else GameConfig.BOOST_RAMP_DOWN
+## Same for the slow down, so the frost fades in and out with it.
+func slow_intensity() -> float:
+	return clampf(
+		(1.0 - speed_multiplier) / maxf(0.001, 1.0 - GameConfig.SLOW_FACTOR), 0.0, 1.0
 	)
+
+
+func _update_effect(delta: float) -> void:
+	if effect_time_left > 0.0:
+		effect_time_left = maxf(0.0, effect_time_left - delta)
+		if effect_time_left == 0.0:
+			effect = Item.NONE
+
+	var target := 1.0
+	var ramp := 1.0
+	match effect:
+		Item.SPEED:
+			target = GameConfig.BOOST_FACTOR
+			ramp = (GameConfig.BOOST_FACTOR - 1.0) / GameConfig.BOOST_RAMP_UP
+		Item.SLOW:
+			target = GameConfig.SLOW_FACTOR
+			ramp = (1.0 - GameConfig.SLOW_FACTOR) / GameConfig.SLOW_RAMP_DOWN
+		_:
+			# Coming back to cruising speed, from either side.
+			if speed_multiplier > 1.0:
+				ramp = (GameConfig.BOOST_FACTOR - 1.0) / GameConfig.BOOST_RAMP_DOWN
+			else:
+				ramp = (1.0 - GameConfig.SLOW_FACTOR) / GameConfig.SLOW_RAMP_UP
+
+	# The speed always eases, never snaps.
 	speed_multiplier = move_toward(speed_multiplier, target, ramp * delta)
 
 
-func _update_pickup_spawn() -> void:
-	if pickup_on_arena or carried_item or elapsed < _next_pickup_at:
-		return
-	pickup = _free_spot(GameConfig.BOOST_RADIUS + 1.0, 5.0)
-	pickup_on_arena = true
+# --------------------------------------------------------------------------- #
+# What lies on the arena
+# --------------------------------------------------------------------------- #
+func has_ground(kind: Ground) -> bool:
+	for item: Dictionary in ground:
+		if item["kind"] == kind:
+			return true
+	return false
+
+
+func ground_position(kind: Ground) -> Vector2:
+	for item: Dictionary in ground:
+		if item["kind"] == kind:
+			return item["position"]
+	return Vector2.ZERO
+
+
+func _update_ground_spawns() -> void:
+	if not has_ground(Ground.BOLT) and carried == Item.NONE and elapsed >= _next_bolt_at:
+		_drop(Ground.BOLT, GameConfig.BOOST_RADIUS + 1.0)
+	if not has_ground(Ground.MYSTERY) and elapsed >= _next_mystery_at:
+		_drop(Ground.MYSTERY, GameConfig.MYSTERY_RADIUS + 1.0)
+
+
+func _drop(kind: Ground, margin: float) -> void:
+	ground.append({"kind": kind, "position": _free_spot(margin, 4.5)})
+
+
+func _collect_ground_items() -> void:
+	for index in range(ground.size() - 1, -1, -1):
+		var item: Dictionary = ground[index]
+		var radius: float = (
+			GameConfig.BOOST_RADIUS if item["kind"] == Ground.BOLT
+			else GameConfig.MYSTERY_RADIUS
+		)
+		if head_position.distance_to(item["position"]) > GameConfig.SNAKE_RADIUS + radius:
+			continue
+		if item["kind"] == Ground.BOLT and carried != Item.NONE:
+			continue    # the slot is busy: leave the bolt where it lies
+
+		ground.remove_at(index)
+		picked_up_this_step = true
+		last_pickup_kind = item["kind"]
+		last_pickup_position = item["position"]
+
+		if item["kind"] == Ground.BOLT:
+			last_roll = Item.SPEED
+			carried = Item.SPEED
+			_next_bolt_at = elapsed + _rng.randf_range(
+				GameConfig.BOOST_RESPAWN.x, GameConfig.BOOST_RESPAWN.y
+			)
+		else:
+			last_roll = _roll_mystery()
+			if last_roll == Item.SLOW:
+				# A curse is swallowed on the spot: there is no choosing it.
+				_start_effect(Item.SLOW)
+			else:
+				carried = last_roll
+			_next_mystery_at = elapsed + _rng.randf_range(
+				GameConfig.MYSTERY_RESPAWN.x, GameConfig.MYSTERY_RESPAWN.y
+			)
+
+
+func _roll_mystery() -> Item:
+	if _forced_roll != Item.NONE:
+		var forced := _forced_roll
+		_forced_roll = Item.NONE
+		return forced
+	return Item.SPEED if _rng.randf() < GameConfig.MYSTERY_BONUS_CHANCE else Item.SLOW
 
 
 ## Drop a bolt on the arena right now (used by the self-test).
 func spawn_pickup_now() -> void:
-	if carried_item:
+	if carried != Item.NONE or has_ground(Ground.BOLT):
 		return
-	pickup = _free_spot(GameConfig.BOOST_RADIUS + 1.0, 4.0)
-	pickup_on_arena = true
+	_drop(Ground.BOLT, GameConfig.BOOST_RADIUS + 1.0)
+
+
+## Drop a crate right now, optionally deciding what it hands out, so a test
+## can walk both the bonus and the curse on purpose.
+func spawn_mystery_now(forced: Item = Item.NONE) -> void:
+	_forced_roll = forced
+	if has_ground(Ground.MYSTERY):
+		return
+	_drop(Ground.MYSTERY, GameConfig.MYSTERY_RADIUS + 1.0)
 
 
 func _free_spot(margin: float, clearance: float) -> Vector2:
@@ -286,6 +403,13 @@ func _free_spot(margin: float, clearance: float) -> Vector2:
 		if hits_body(candidate, 0.0):
 			continue
 		if candidate.distance_to(food) < 2.0:
+			continue
+		var clear := true
+		for item: Dictionary in ground:
+			if candidate.distance_to(item["position"]) < 2.5:
+				clear = false
+				break
+		if not clear:
 			continue
 		return candidate
 	return Vector2(

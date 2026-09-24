@@ -34,6 +34,8 @@ func _ready() -> void:
 	_material.set_shader_parameter("tail_color", GameConfig.SNAKE_TAIL_COLOR)
 	_material.set_shader_parameter("boost_color", GameConfig.BOOST_COLOR)
 	_material.set_shader_parameter("spark_color", GameConfig.SPARK_COLOR)
+	_material.set_shader_parameter("frost_color", GameConfig.FROST_COLOR)
+	_material.set_shader_parameter("frost_pale_color", GameConfig.FROST_PALE_COLOR)
 	material_override = _material
 
 	var radial := GameConfig.TUBE_RADIAL_SEGMENTS
@@ -50,9 +52,10 @@ func set_flash(flash: float) -> void:
 	_material.set_shader_parameter("flash", clampf(flash, 0.0, 1.0))
 
 
-## How strongly the lightning shows along the body, 0 to 1.
-func set_boost(intensity: float, _phase: float) -> void:
-	_material.set_shader_parameter("boost", clampf(intensity, 0.0, 1.0))
+## How strongly the lightning and the frost show, each 0 to 1.
+func set_effects(boost: float, slow: float) -> void:
+	_material.set_shader_parameter("boost", clampf(boost, 0.0, 1.0))
+	_material.set_shader_parameter("slow", clampf(slow, 0.0, 1.0))
 
 
 func rebuild(world: SnakeWorld, height: float) -> void:

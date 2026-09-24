@@ -25,14 +25,26 @@ func decide(world: SnakeWorld) -> float:
 	return signf(error)
 
 
-## The bolt is worth a detour, but not a long one.
+## A bolt or a crate is worth a detour, but not a long one. The bot takes
+## the gamble on crates: it cannot know what is inside either.
 func _target(world: SnakeWorld) -> Vector2:
-	if world.pickup_on_arena and not world.carried_item:
-		var to_pickup := world.head_position.distance_to(world.pickup)
-		var to_food := world.head_position.distance_to(world.food)
-		if to_pickup < to_food * 1.6:
-			return world.pickup
-	return world.food
+	var best := world.food
+	var best_distance := world.head_position.distance_to(world.food) * 1.6
+
+	if world.carried == SnakeWorld.Item.NONE and world.has_ground(SnakeWorld.Ground.BOLT):
+		var bolt := world.ground_position(SnakeWorld.Ground.BOLT)
+		var distance := world.head_position.distance_to(bolt)
+		if distance < best_distance:
+			best = bolt
+			best_distance = distance
+
+	if world.has_ground(SnakeWorld.Ground.MYSTERY):
+		var crate := world.ground_position(SnakeWorld.Ground.MYSTERY)
+		var distance := world.head_position.distance_to(crate)
+		if distance < best_distance:
+			best = crate
+
+	return best
 
 
 ## Non-zero when something is in the way, pointing to the freer side.
