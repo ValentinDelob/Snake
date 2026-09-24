@@ -61,6 +61,8 @@ var _saved_address := ""
 
 var _shown_score := -1
 var _breath := 0.0
+var _score_note: Label
+var _score_note_time := 0.0
 
 
 func _ready() -> void:
@@ -74,6 +76,9 @@ func _ready() -> void:
 ## A slow breath on the call to action, to pull the eye to it. Driven here
 ## rather than by a looping tween, which cannot outlive its panel.
 func _process(delta: float) -> void:
+	if _score_note_time > 0.0:
+		_score_note_time = maxf(0.0, _score_note_time - delta)
+		_score_note.modulate.a = minf(1.0, _score_note_time / 0.4)
 	if not _overlay.visible:
 		return
 	_breath += delta
@@ -117,6 +122,13 @@ func _build_top_bar() -> void:
 
 	_score_value = _label("0", 30, GameConfig.TEXT_COLOR)
 	score_box.add_child(_score_value)
+
+	# Points won or lost in one go deserve saying out loud, otherwise the
+	# number simply jumps and the player never learns what the crate did.
+	_score_note = _label("", 20, GameConfig.ACCENT_COLOR)
+	_score_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_score_note.modulate.a = 0.0
+	score_box.add_child(_score_note)
 
 	row.add_child(_spacer())
 
@@ -193,6 +205,21 @@ func set_stats(score: int, best: int, mode_text: String) -> void:
 		_punch(_score_value)
 	_best_value.text = str(best)
 	_mode_chip.text = mode_text
+
+
+## Call out a jump in the score: "+3" beside it, in its own colour, fading
+## away on its own.
+func announce_score(points: int) -> void:
+	if points == 0:
+		return
+	_score_note.text = "+%d" % points if points > 0 else str(points)
+	_score_note.add_theme_color_override(
+		"font_color",
+		GameConfig.SNAKE_HEAD_COLOR if points > 0 else GameConfig.DANGER_COLOR
+	)
+	_score_note_time = 1.6
+	_score_note.modulate.a = 1.0
+	_punch(_score_note)
 
 
 ## Item slot state: what is carried, and the effect currently running.

@@ -157,6 +157,7 @@ var _pending_join := ""
 var _pending_expect_timeout := false
 var _last_menu_message := ""
 var _last_death_cause: SnakeWorld.Outcome = SnakeWorld.Outcome.MOVING
+var _score_on_bar := -1          # the score the bar is already showing
 
 
 ## --host and --join let a test (or a shortcut) open a session immediately.
@@ -228,6 +229,11 @@ func play_time() -> float:
 func _refresh_hud() -> void:
 	var snake = local_snake()
 	var score: int = snake.score if snake != null else 0
+	# Watching the number rather than the pickup covers every case at once:
+	# solo, host, and a client whose points are decided on another machine.
+	if state == State.PLAY and _score_on_bar >= 0 and score != _score_on_bar:
+		_hud.announce_score(score - _score_on_bar)
+	_score_on_bar = score
 	_hud.set_stats(
 		score,
 		maxi(PlayerProfile.high_score(), score),
@@ -330,20 +336,24 @@ func _on_food_eaten(id: int) -> void:
 func _on_item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item) -> void:
 	var crate := kind == SnakeWorld.Ground.MYSTERY
 	var color := GameConfig.SPARK_COLOR
+	var told := "collected a speed bolt"
 	if crate:
-		color = (
-			GameConfig.FROST_COLOR if roll == SnakeWorld.Item.SLOW
-			else GameConfig.MYSTERY_COLOR
-		)
+		match roll:
+			SnakeWorld.Item.SLOW:
+				color = GameConfig.FROST_COLOR
+				told = "opened a crate: slow down, forced on the spot"
+			SnakeWorld.Item.SCORE_UP:
+				color = GameConfig.SNAKE_HEAD_COLOR
+				told = "opened a crate: %d points, taken at once" % GameConfig.SCORE_CARD_POINTS
+			SnakeWorld.Item.SCORE_DOWN:
+				color = GameConfig.DANGER_COLOR
+				told = "opened a crate: %d points lost, taken at once" % GameConfig.SCORE_CARD_POINTS
+			_:
+				color = GameConfig.MYSTERY_COLOR
+				told = "opened a crate: speed boost, stored in the slot"
 	var snake: SnakeWorld = game_match.snakes[id]
 	_board.play_pickup_flash(snake.head_position, _elapsed, color)
-
-	if not crate:
-		Journal.info("game", "Player %d collected a speed bolt" % id)
-	elif roll == SnakeWorld.Item.SLOW:
-		Journal.info("game", "Player %d opened a crate: slow down, forced on the spot" % id)
-	else:
-		Journal.info("game", "Player %d opened a crate: speed boost, stored in the slot" % id)
+	Journal.info("game", "Player %d %s" % [id, told])
 
 
 func _on_match_finished(winner: int) -> void:
@@ -470,6 +480,7 @@ func _begin_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array = Pa
 	else:
 		game_match.authoritative = true
 	game_match.start()
+	_score_on_bar = -1
 	if not rocks.is_empty():
 		game_match.set_obstacles(rocks)
 	_board.set_obstacles(game_match.obstacles)

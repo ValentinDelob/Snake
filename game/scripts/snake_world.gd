@@ -14,7 +14,7 @@ extends RefCounted
 enum Outcome { MOVING, DEAD_WALL, DEAD_SELF, DEAD_OTHER, DEAD_ROCK }
 
 ## What an item does once it takes effect.
-enum Item { NONE, SPEED, SLOW }
+enum Item { NONE, SPEED, SLOW, SCORE_UP, SCORE_DOWN }
 
 ## What can be lying on the arena.
 enum Ground { BOLT, MYSTERY }
@@ -168,6 +168,12 @@ func advance(delta: float) -> void:
 			target_body_length, body_length + GameConfig.GROWTH_SPEED * delta
 		)
 		_points_dirty = true
+	elif body_length > target_body_length:
+		# Points lost pull the tail back in at the same pace it grew out.
+		body_length = maxf(
+			target_body_length, body_length - GameConfig.GROWTH_SPEED * delta
+		)
+		_points_dirty = true
 	heading = wrapf(heading + turn_input * GameConfig.TURN_RATE * delta, -PI, PI)
 
 	var travel := GameConfig.SNAKE_SPEED * speed_multiplier * delta
@@ -202,6 +208,20 @@ func grow(amount: float) -> void:
 	target_body_length += amount
 
 
+## Move the score and let the body follow it. Length is nothing but the
+## score made visible: lose points and the snake shortens again, and a
+## score driven down to nothing leaves it as small as it started.
+func add_score(points: int) -> int:
+	var before := score
+	score = maxi(0, score + points)
+	target_body_length = length_for_score(score)
+	return score - before
+
+
+static func length_for_score(value: int) -> float:
+	return GameConfig.START_BODY_LENGTH + float(maxi(0, value)) * GameConfig.GROWTH_PER_FOOD
+
+
 # --------------------------------------------------------------------------- #
 # Items
 # --------------------------------------------------------------------------- #
@@ -217,6 +237,10 @@ func use_item() -> bool:
 
 ## A curse is not offered, it is applied: the snake swallows it on the spot.
 func start_effect(kind: Item) -> void:
+	# Score cards are settled the instant the crate opens: there is no
+	# effect to run down, so they never reach this.
+	if kind != Item.SPEED and kind != Item.SLOW:
+		return
 	effect = kind
 	effect_time_left = (
 		GameConfig.BOOST_DURATION if kind == Item.SPEED else GameConfig.SLOW_DURATION

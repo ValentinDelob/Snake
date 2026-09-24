@@ -13,7 +13,7 @@ extends RefCounted
 ## Injected key events go through the normal input pipeline, so the test
 ## exercises the same code path as a player.
 
-enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, PAUSE, FINISH }
+enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, PAUSE, FINISH }
 
 const PAUSE_FRAMES := 30
 const MIN_ACCEPTABLE_FPS := 25.0
@@ -57,6 +57,23 @@ var crate_malus_forced := false
 var min_multiplier := 1.0
 var multiplier_after_slow := -1.0
 
+# score cards
+var score_card_gain := 0
+var score_card_loss := 0
+var length_after_gain := -1.0
+var length_after_loss := -1.0
+var score_floor_held := false
+var length_after_floor := -1.0
+var _gain_crate_requested := false
+var _loss_crate_requested := false
+var _score_before := -1
+var _length_before := -1.0
+var _length_checks := 0
+var _length_errors := 0
+var _score_last := -1
+var _length_last := -1.0
+var _floor_stage := 0
+
 # rocks
 var rocks_seen := 0
 var rock_smallest := 99.0
@@ -98,6 +115,7 @@ var _spacing_errors := 0
 var _next_spacing_check := 0.5
 var _remote_first_seen := {}
 var _release_at := -1.0
+var _leave_at := 0.0
 
 
 static func press(keycode: int) -> void:
@@ -228,12 +246,22 @@ func _network_frame(game) -> void:
 			game.agent = null
 
 	elif state_name == "gameover":
-		if not _finished:
+		if not match_finished:
 			match_finished = true
 			winner_id = game._winner_id
 			Journal.info("selftest", "round over, winner is %d" % winner_id)
+			# Leaving the instant the result lands would shut the session
+			# down under the other machines, which are still reading it.
+			_leave_at = Time.get_ticks_msec() / 1000.0 + 2.0
+		elif not _finished and Time.get_ticks_msec() / 1000.0 >= _leave_at:
 			_finished = true
 			press(KEY_ESCAPE)
+
+	elif state_name == "menu" and round_started and not _finished:
+		# Dropped out of the round without a result: nothing left to watch.
+		Journal.warn("selftest", "back on the menu with the round unfinished")
+		_finished = true
+		press(KEY_ESCAPE)
 
 
 func _watch_remotes(game) -> void:
@@ -284,6 +312,10 @@ func _on_play(game) -> void:
 			_run_crate_bonus(game, now)
 		Phase.CRATE_MALUS:
 			_run_crate_malus(game, now)
+		Phase.SCORE_UP:
+			_run_score_up(game, now)
+		Phase.SCORE_DOWN:
+			_run_score_down(game, now)
 		Phase.PAUSE:
 			_run_pause()
 		Phase.FINISH:
@@ -348,6 +380,12 @@ func _on_round_restart(game) -> void:
 	if phase == Phase.CRATE_MALUS and multiplier_after_slow < 0.0:
 		_malus_crate_requested = false
 		_slow_started_at = -1.0
+	if phase == Phase.SCORE_UP and score_card_gain == 0:
+		_gain_crate_requested = false
+	if phase == Phase.SCORE_DOWN and not score_floor_held:
+		_loss_crate_requested = false
+		_floor_stage = 0
+		score_card_loss = 0
 	if phase == Phase.FINISH and not rock_death:
 		# The rock went with the old arena: the next round needs a new one.
 		_rock_dropped = false
@@ -485,7 +523,90 @@ func _run_crate_malus(game, now: float) -> void:
 		Journal.info("selftest", "slow down finished: floor x%.2f, back to x%.2f" % [
 			min_multiplier, multiplier_after_slow,
 		])
+		_enter_phase(Phase.SCORE_UP, now)
+
+
+## A crate rigged to hold the winning card: three points, straight away,
+## and a body that grows to match them.
+func _run_score_up(game, now: float) -> void:
+	var snake = game.local_snake()
+	if not _gain_crate_requested:
+		Journal.info("selftest", "dropping a crate rigged with the winning card")
+		_score_before = snake.score
+		_length_before = snake.target_body_length
+		_score_last = snake.score
+		_length_last = snake.target_body_length
+		game.game_match.drop_at(
+			SnakeWorld.Ground.MYSTERY, _ahead_of(snake), SnakeWorld.Item.SCORE_UP
+		)
+		_gain_crate_requested = true
+		_phase_started = now
+		return
+
+	# A fruit swallowed on the same second would flatter the card, so only
+	# the jump inside a single frame counts as its doing.
+	var jump: int = snake.score - _score_last
+	var stretch: float = snake.target_body_length - _length_last
+	_score_last = snake.score
+	_length_last = snake.target_body_length
+	if jump >= GameConfig.SCORE_CARD_POINTS:
+		score_card_gain = jump
+		length_after_gain = stretch
+		Journal.info("selftest", "winning card paid %d points, body up %.2f units" % [
+			score_card_gain, length_after_gain,
+		])
+		_enter_phase(Phase.SCORE_DOWN, now)
+	elif now - _phase_started > 8.0:
+		_gain_crate_requested = false
+
+
+## The losing card, twice over: once from a healthy score to see the body
+## shrink, then again from nearly nothing to see the score stop at zero and
+## the snake go back to the size it started at.
+func _run_score_down(game, now: float) -> void:
+	var snake = game.local_snake()
+
+	# Second half of the phase: keep feeding it losing cards until the score
+	# cannot go any lower, then check where it stopped.
+	if _floor_stage == 1 and snake.score == 0:
+		score_floor_held = true
+		length_after_floor = snake.target_body_length
+		Journal.info("selftest", "score bottomed out at 0, body back to %.2f units" % [
+			length_after_floor,
+		])
 		_enter_phase(Phase.PAUSE, now)
+		return
+
+	if not _loss_crate_requested:
+		Journal.info("selftest", "dropping a crate rigged with the losing card")
+		_score_before = snake.score
+		_length_before = snake.target_body_length
+		_score_last = snake.score
+		_length_last = snake.target_body_length
+		game.game_match.drop_at(
+			SnakeWorld.Ground.MYSTERY, _ahead_of(snake), SnakeWorld.Item.SCORE_DOWN
+		)
+		_loss_crate_requested = true
+		_phase_started = now
+		return
+
+	var drop: int = _score_last - snake.score
+	var shrink: float = _length_last - snake.target_body_length
+	_score_last = snake.score
+	_length_last = snake.target_body_length
+	if drop < GameConfig.SCORE_CARD_POINTS and snake.score > 0:
+		if now - _phase_started > 8.0:
+			_loss_crate_requested = false   # it wandered off: lay another
+		return
+
+	if _floor_stage == 0 and drop >= GameConfig.SCORE_CARD_POINTS:
+		score_card_loss = drop
+		length_after_loss = shrink
+		Journal.info("selftest", "losing card cost %d points, body down %.2f units" % [
+			score_card_loss, length_after_loss,
+		])
+	_floor_stage = 1
+	_loss_crate_requested = false
 
 
 func _run_pause() -> void:
@@ -514,6 +635,12 @@ func _watch_world(game, now: float) -> void:
 			])
 		_growth_observed = true
 	_check_body_spacing(snake, now)
+
+	# The promise behind the whole feature: the body a snake carries is
+	# never anything other than what its score bought.
+	_length_checks += 1
+	if absf(snake.target_body_length - SnakeWorld.length_for_score(snake.score)) > 0.001:
+		_length_errors += 1
 
 
 ## A spot a few units in front of the snake: whatever is put there will be
@@ -607,10 +734,12 @@ func summary(game) -> String:
 			peers_seen, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
+		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
+		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
 		stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 	]
@@ -711,6 +840,28 @@ func _verify_solo(stats: Dictionary) -> Array:
 	if not rock_death:
 		failures.append("driving into a rock did not kill the snake")
 
+	var card: int = GameConfig.SCORE_CARD_POINTS
+	var per_point: float = GameConfig.GROWTH_PER_FOOD
+	if score_card_gain != card:
+		failures.append("the winning card paid %d points instead of %d" % [score_card_gain, card])
+	elif absf(length_after_gain - card * per_point) > 0.05:
+		failures.append("the body grew %.2f units for %d points" % [length_after_gain, card])
+	if score_card_loss != card:
+		failures.append("the losing card cost %d points instead of %d" % [score_card_loss, card])
+	elif absf(length_after_loss - card * per_point) > 0.05:
+		failures.append("the body shrank %.2f units for %d points" % [length_after_loss, card])
+	if not score_floor_held:
+		failures.append("the score never reached its floor of zero")
+	elif absf(length_after_floor - GameConfig.START_BODY_LENGTH) > 0.05:
+		failures.append("at zero the body was %.2f units, not its starting %.2f" % [
+			length_after_floor, GameConfig.START_BODY_LENGTH
+		])
+
+
+	if _length_checks == 0:
+		failures.append("the length was never compared against the score")
+	if _length_errors > 0:
+		failures.append("the body did not match the score on %d frame(s)" % _length_errors)
 	if _spacing_checks == 0:
 		failures.append("the body spacing was never checked")
 	if _spacing_errors > 0:

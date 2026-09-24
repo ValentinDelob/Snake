@@ -294,8 +294,7 @@ func _check_bite(id: int, snake: SnakeWorld) -> void:
 func _check_food(id: int, snake: SnakeWorld) -> void:
 	if snake.head_position.distance_to(food) >= GameConfig.SNAKE_RADIUS + GameConfig.FOOD_RADIUS:
 		return
-	snake.score += 1
-	snake.grow(GameConfig.GROWTH_PER_FOOD)
+	snake.add_score(1)
 	food = free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0)
 	food_eaten.emit(id)
 
@@ -321,11 +320,18 @@ func _check_ground(id: int, snake: SnakeWorld) -> void:
 			)
 		else:
 			roll = _roll_mystery()
-			if roll == SnakeWorld.Item.SLOW:
-				# A curse is swallowed on the spot: there is no choosing it.
-				snake.start_effect(SnakeWorld.Item.SLOW)
-			else:
-				snake.carried = roll
+			match roll:
+				SnakeWorld.Item.SLOW:
+					# A curse is swallowed on the spot: there is no choosing it.
+					snake.start_effect(SnakeWorld.Item.SLOW)
+				SnakeWorld.Item.SCORE_UP:
+					# Points are settled at once, good or bad: there is
+					# nothing to aim or hold on to.
+					snake.add_score(GameConfig.SCORE_CARD_POINTS)
+				SnakeWorld.Item.SCORE_DOWN:
+					snake.add_score(-GameConfig.SCORE_CARD_POINTS)
+				_:
+					snake.carried = roll
 			_next_mystery_at = elapsed + _rng.randf_range(
 				GameConfig.MYSTERY_RESPAWN.x, GameConfig.MYSTERY_RESPAWN.y
 			)
@@ -338,10 +344,10 @@ func _roll_mystery() -> SnakeWorld.Item:
 		var forced := _forced_roll
 		_forced_roll = SnakeWorld.Item.NONE
 		return forced
-	return (
-		SnakeWorld.Item.SPEED if _rng.randf() < GameConfig.MYSTERY_BONUS_CHANCE
-		else SnakeWorld.Item.SLOW
-	)
+	var card := _rng.randf() < GameConfig.MYSTERY_SCORE_CHANCE
+	if _rng.randf() < GameConfig.MYSTERY_BONUS_CHANCE:
+		return SnakeWorld.Item.SCORE_UP if card else SnakeWorld.Item.SPEED
+	return SnakeWorld.Item.SCORE_DOWN if card else SnakeWorld.Item.SLOW
 
 
 func _update_spawns() -> void:

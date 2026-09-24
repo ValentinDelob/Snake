@@ -39,6 +39,10 @@ const MYSTERY_RADIUS := 0.55
 const MYSTERY_FIRST_SPAWN := Vector2(9.0, 15.0)
 const MYSTERY_RESPAWN := Vector2(18.0, 30.0)
 const MYSTERY_BONUS_CHANCE := 0.5
+## A crate is a gamble on four faces: a speed boost or three points on the
+## good side, a slow down or three points lost on the bad one.
+const MYSTERY_SCORE_CHANCE := 0.5    # share of each side that is a score card
+const SCORE_CARD_POINTS := 3
 
 ## The slow down. It never lies on the arena: it only comes out of a crate,
 ## and it is forced on the snake straight away.
