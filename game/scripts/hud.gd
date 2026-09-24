@@ -1,6 +1,13 @@
 class_name SnakeHud
 extends CanvasLayer
 
+## What the player asked for on the menu. The HUD owns the pages and their
+## back navigation; the game only hears about the decisions.
+signal solo_requested()
+signal host_requested()
+signal join_requested(address: String)
+signal quit_requested()
+
 ## The interface: a slim top bar while playing, and a centred card for the
 ## menu, the pause and the game over screens.
 ##
@@ -12,6 +19,11 @@ const PANEL_COLOR := Color(0.04, 0.06, 0.1, 0.72)
 const CARD_COLOR := Color(0.04, 0.055, 0.09, 0.93)
 const KEYCAP_COLOR := Color(0.13, 0.17, 0.24, 0.95)
 const BORDER_COLOR := Color(0.35, 0.42, 0.52, 0.55)
+const BUTTON_COLOR := Color(0.1, 0.13, 0.19, 0.95)
+
+## The menu is three pages deep: the main one, the multiplayer choice, and
+## the address box behind "join".
+enum MenuPage { MAIN, MULTIPLAYER, JOIN }
 
 var _top_bar: Control
 var _score_value: Label
@@ -33,6 +45,19 @@ var _cta_panel: PanelContainer
 var _cta_key: Label
 var _cta_action: Label
 var _hints: VBoxContainer
+
+var _buttons: VBoxContainer
+var _address_field: LineEdit
+var _menu_page: MenuPage = MenuPage.MAIN
+## The menu is walked by hand rather than leaning on the engine's focus
+## neighbours: it behaves the same whether the window is focused or not,
+## and it can be driven by the self-test.
+var _menu_items: Array[Control] = []
+var _menu_index := 0
+var _menu_best := 0
+var _menu_games := 0
+var _menu_message := ""
+var _saved_address := ""
 
 var _shown_score := -1
 var _breath := 0.0
@@ -276,6 +301,11 @@ func _build_overlay() -> void:
 	card_box.add_child(_cta_holder)
 	_build_call_to_action()
 
+	_buttons = VBoxContainer.new()
+	_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	_buttons.add_theme_constant_override("separation", 8)
+	card_box.add_child(_buttons)
+
 	_hints = VBoxContainer.new()
 	_hints.alignment = BoxContainer.ALIGNMENT_CENTER
 	_hints.add_theme_constant_override("separation", 6)
@@ -283,24 +313,227 @@ func _build_overlay() -> void:
 
 
 func show_menu(best: int, games: int, message: String = "") -> void:
+	_menu_best = best
+	_menu_games = games
+	_menu_message = message
+	_show_menu_page(MenuPage.MAIN)
+
+
+## Step back through the menu pages. Returns false when there is nowhere
+## left to go, which is the game's cue to quit.
+func menu_back() -> bool:
+	match _menu_page:
+		MenuPage.JOIN:
+			_show_menu_page(MenuPage.MULTIPLAYER)
+			return true
+		MenuPage.MULTIPLAYER:
+			_show_menu_page(MenuPage.MAIN)
+			return true
+		_:
+			return false
+
+
+func _show_menu_page(page: MenuPage) -> void:
+	_menu_page = page
 	_title.text = "SNAKE 3D"
 	_title.add_theme_color_override("font_color", GameConfig.SNAKE_HEAD_COLOR)
-	_subtitle.text = message if message != "" else "grab the bolt for speed - the crate is a gamble"
-	_subtitle.add_theme_color_override(
-		"font_color", GameConfig.DANGER_COLOR if message != "" else GameConfig.TEXT_COLOR
-	)
-	_set_chips([
-		["BEST", str(best), GameConfig.ACCENT_COLOR],
-		["GAMES", str(games), GameConfig.TEXT_COLOR],
-	])
-	_set_call_to_action("ENTER", "play solo")
-	_set_hints([
-		[["H"], "host a game others can join"],
-		[["J"], "join the last address used"],
-		[["SPACE"], "fire the item you carry"],
-		[["C", "V"], "camera  /  flat view"],
-	])
+	_cta_holder.visible = false
+	_address_field = null
+
+	match page:
+		MenuPage.MAIN:
+			_subtitle.text = (
+				_menu_message if _menu_message != ""
+				else "grab the bolt for speed - the crate is a gamble"
+			)
+			_subtitle.add_theme_color_override(
+				"font_color",
+				GameConfig.DANGER_COLOR if _menu_message != "" else GameConfig.TEXT_COLOR
+			)
+			_set_chips([
+				["BEST", str(_menu_best), GameConfig.ACCENT_COLOR],
+				["GAMES", str(_menu_games), GameConfig.TEXT_COLOR],
+			])
+			_set_buttons([
+				{"text": "PLAY SOLO", "primary": true, "action": solo_requested},
+				{"text": "MULTIPLAYER", "action": func(): _show_menu_page(MenuPage.MULTIPLAYER)},
+				{"text": "QUIT", "action": quit_requested},
+			])
+			_set_hints([
+				[["SPACE"], "fire the item you carry"],
+				[["C", "V"], "camera  /  flat view"],
+			])
+		MenuPage.MULTIPLAYER:
+			_menu_message = ""
+			_subtitle.text = "play against somebody on another computer"
+			_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
+			_set_chips([])
+			_set_buttons([
+				{"text": "HOST A GAME", "primary": true, "action": host_requested},
+				{"text": "JOIN A GAME", "action": func(): _show_menu_page(MenuPage.JOIN)},
+				{"text": "BACK", "action": func(): _show_menu_page(MenuPage.MAIN)},
+			])
+			_set_hints([
+				[["ESC"], "back"],
+			])
+		MenuPage.JOIN:
+			_subtitle.text = "address of the computer hosting the game"
+			_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
+			_set_chips([])
+			_set_buttons([
+				{"field": true},
+				{"text": "CONNECT", "primary": true, "action": func(): _submit_address()},
+				{"text": "BACK", "action": func(): _show_menu_page(MenuPage.MULTIPLAYER)},
+			])
+			_set_hints([
+				[["ENTER"], "connect"],
+				[["ESC"], "back"],
+			])
 	_present()
+
+
+func _submit_address() -> void:
+	var address := "127.0.0.1"
+	if _address_field != null and _address_field.text.strip_edges() != "":
+		address = _address_field.text.strip_edges()
+	join_requested.emit(address)
+
+
+## Fill the button column. An entry is either a button or the address box.
+func _set_buttons(entries: Array) -> void:
+	for child in _buttons.get_children():
+		child.queue_free()
+	_buttons.visible = not entries.is_empty()
+
+	_menu_items = []
+	for entry: Dictionary in entries:
+		var control: Control
+		if entry.get("field", false):
+			control = _build_address_field()
+		else:
+			control = _build_button(entry["text"], entry.get("primary", false), entry["action"])
+		_buttons.add_child(control)
+		_menu_items.append(control)
+
+	# Select the first thing on the page, so the keyboard works without a
+	# click and the self-test can drive the menu the way a player does.
+	_menu_index = 0
+	if not _menu_items.is_empty():
+		_select_menu_item(0)
+
+
+func _select_menu_item(index: int) -> void:
+	if _menu_items.is_empty():
+		return
+	_menu_index = wrapi(index, 0, _menu_items.size())
+	var item := _menu_items[_menu_index]
+	item.call_deferred("grab_focus")
+
+
+## The engine moves the focus too (clicks, its own arrow handling), so the
+## real focus always wins over our index.
+func _sync_menu_index() -> void:
+	var owner := get_viewport().gui_get_focus_owner()
+	var owned := _menu_items.find(owner)
+	if owned >= 0:
+		_menu_index = owned
+
+
+## Move the selection. The game routes the arrow keys here.
+func move_menu_focus(step: int) -> void:
+	if _menu_items.is_empty():
+		return
+	_sync_menu_index()
+	_select_menu_item(_menu_index + step)
+
+
+## Press whatever is selected.
+func activate_menu_item() -> bool:
+	if _menu_items.is_empty():
+		return false
+	_sync_menu_index()
+	var item := _menu_items[_menu_index]
+	if item is LineEdit:
+		_submit_address()
+	elif item is Button:
+		(item as Button).emit_signal("pressed")
+	return true
+
+
+func menu_open() -> bool:
+	return not _menu_items.is_empty() and _overlay.visible
+
+
+func _build_button(text: String, primary: bool, action) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(300, 46)
+	button.focus_mode = Control.FOCUS_ALL
+	button.add_theme_font_size_override("font_size", 18)
+
+	var accent: Color = GameConfig.SNAKE_HEAD_COLOR if primary else GameConfig.TEXT_COLOR
+	button.add_theme_color_override("font_color", accent)
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_focus_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	button.add_theme_stylebox_override("normal", _button_style(primary, 0.0))
+	button.add_theme_stylebox_override("hover", _button_style(primary, 0.12))
+	button.add_theme_stylebox_override("pressed", _button_style(primary, 0.2))
+	button.add_theme_stylebox_override("focus", _button_style(primary, 0.08, true))
+
+	if action is Signal:
+		button.pressed.connect(func(): action.emit())
+	else:
+		button.pressed.connect(action)
+	return button
+
+
+func _button_style(primary: bool, lift: float, focused: bool = false) -> StyleBoxFlat:
+	var accent: Color = GameConfig.SNAKE_HEAD_COLOR if primary else GameConfig.TEXT_COLOR
+	var style := StyleBoxFlat.new()
+	style.bg_color = (
+		Color(accent.r, accent.g, accent.b, 0.16 + lift) if primary
+		else Color(BUTTON_COLOR.r, BUTTON_COLOR.g, BUTTON_COLOR.b, 0.95 + lift)
+	)
+	style.set_corner_radius_all(14)
+	style.set_content_margin_all(10)
+	style.border_color = Color(accent.r, accent.g, accent.b, 0.75 if focused else 0.4)
+	style.set_border_width_all(2 if focused else 1)
+	return style
+
+
+func _build_address_field() -> LineEdit:
+	_address_field = LineEdit.new()
+	_address_field.custom_minimum_size = Vector2(300, 46)
+	_address_field.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_address_field.placeholder_text = "192.168.1.20"
+	_address_field.add_theme_font_size_override("font_size", 18)
+	_address_field.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
+	_address_field.add_theme_stylebox_override("normal", _button_style(false, 0.0))
+	_address_field.add_theme_stylebox_override("focus", _button_style(false, 0.08, true))
+	_address_field.text = _saved_address
+	_address_field.caret_column = _saved_address.length()
+	# The remembered address is a suggestion: selecting it means typing
+	# replaces it instead of landing in the middle of it.
+	_address_field.focus_entered.connect(func(): _address_field.select_all())
+	_address_field.text_submitted.connect(func(_text): _submit_address())
+	# A focused LineEdit swallows escape, which left the page with no way
+	# back for anybody typing. Give it the same meaning as everywhere else.
+	_address_field.gui_input.connect(func(event: InputEvent):
+		var key := event as InputEventKey
+		if key != null and key.pressed and key.keycode == KEY_ESCAPE:
+			_address_field.accept_event()
+			_show_menu_page(MenuPage.MULTIPLAYER)
+	)
+	return _address_field
+
+
+## Pre-fill the address box with whatever was used last. The menu remembers
+## it even while the field does not exist, since the join page is built late.
+func set_address(address: String) -> void:
+	_saved_address = address
+	if _address_field != null:
+		_address_field.text = address
 
 
 ## The waiting room, before the host starts the round.
@@ -435,8 +668,14 @@ func _build_call_to_action() -> void:
 
 
 func _set_call_to_action(key: String, action: String) -> void:
+	_cta_holder.visible = true
 	_cta_key.text = key
 	_cta_action.text = action
+	if _buttons != null:
+		for child in _buttons.get_children():
+			child.queue_free()
+		_buttons.visible = false
+		_address_field = null
 
 
 func _set_chips(entries: Array) -> void:

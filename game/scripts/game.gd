@@ -98,6 +98,11 @@ func _ready() -> void:
 	_camera.set_mode_by_name(str(PlayerProfile.get_preference("camera")))
 	_camera.set_flat(str(PlayerProfile.get_preference("view")) == "flat")
 
+	_hud.solo_requested.connect(_start_solo)
+	_hud.host_requested.connect(_start_hosting)
+	_hud.join_requested.connect(_join_session)
+	_hud.quit_requested.connect(func(): request_quit("menu-quit"))
+
 	Session.peer_joined.connect(_on_peer_joined)
 	Session.peer_left.connect(_on_peer_left)
 	Session.connected_to_host.connect(_on_connected_to_host)
@@ -384,6 +389,7 @@ func _start_hosting() -> void:
 
 
 func _join_session(address: String) -> void:
+	Journal.info("game", "Joining %s" % address)
 	if not Session.join(address):
 		_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), Session.last_error)
 		return
@@ -565,6 +571,7 @@ func _enter_menu(message: String = "") -> void:
 	_hud.set_bar_visible(false)
 	_camera.set_preview(true)
 	_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), message)
+	_hud.set_address(str(PlayerProfile.get_preference("address")))
 
 
 func _enter_lobby() -> void:
@@ -625,7 +632,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			_held_fly.erase(key_event.keycode)
 		return
 
-	# Turning is held down, so releases matter as much as presses.
+	# Turning is held down, so releases matter as much as presses. The menu
+	# needs the same keys to walk its list, so it gets them first.
+	if state == State.MENU:
+		if key_event.pressed:
+			_on_key(key_event.keycode)
+		return
+
 	if TURN_KEYS.has(key_event.keycode):
 		if key_event.pressed:
 			_held_turns[key_event.keycode] = TURN_KEYS[key_event.keycode]
@@ -640,14 +653,18 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_key(keycode: int) -> void:
 	match state:
 		State.MENU:
-			if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
-				_start_solo()
-			elif keycode == KEY_H:
-				_start_hosting()
-			elif keycode == KEY_J:
-				_join_session(str(PlayerProfile.get_preference("address")))
+			# Clicks go straight to the buttons; the keyboard is walked here
+			# so it behaves the same whatever has focus.
+			if keycode == KEY_UP or keycode == KEY_W or keycode == KEY_Z:
+				_hud.move_menu_focus(-1)
+			elif keycode == KEY_DOWN or keycode == KEY_S:
+				_hud.move_menu_focus(1)
+			elif keycode == KEY_ENTER or keycode == KEY_KP_ENTER or keycode == KEY_SPACE:
+				if not _hud.activate_menu_item():
+					_start_solo()
 			elif keycode == KEY_ESCAPE:
-				request_quit("menu-quit")
+				if not _hud.menu_back():
+					request_quit("menu-quit")
 		State.LOBBY:
 			if keycode == KEY_ENTER and Session.is_host():
 				_start_match()
