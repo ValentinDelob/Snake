@@ -79,6 +79,8 @@ var quality_faces := {}
 ## frame pacing: limit -> did the engine take it, and both vsync states
 var fps_limits_seen := {}
 var vsync_states_seen := {}
+## the arena the round was played on
+var arena_seen := Vector2.ZERO
 ## debug readout: the frame rate it showed, and whether it went away again
 var debug_fps_shown := 0
 var debug_hidden := false
@@ -234,6 +236,7 @@ func _network_frame(game) -> void:
 
 	if state_name == "play":
 		round_started = true
+		arena_seen = Vector2(game.game_match.width, game.game_match.height)
 		# A client builds no arena of its own: rocks here mean the host's
 		# arena arrived intact.
 		rocks_seen = maxi(rocks_seen, game.game_match.obstacles.size())
@@ -291,6 +294,7 @@ func _watch_remotes(game) -> void:
 # The solo script
 # --------------------------------------------------------------------------- #
 func _on_menu(game) -> void:
+	arena_seen = Vector2(game.game_match.width, game.game_match.height)
 	if not _entered_play and game.stats["frames"] > 30:
 		Journal.info("selftest", "starting a game from the menu")
 		_entered_play = true
@@ -796,9 +800,9 @@ func summary(game) -> String:
 			stats["frames"], stats["fps"],
 		]
 	if network:
-		return "network(%s) peers=%d remote_moved=%s winner=%d spectated=%s rocks=%d games=%d frames=%d fps=%.1f" % [
+		return "network(%s) peers=%d arena=%.0fx%.0f remote_moved=%s winner=%d spectated=%s rocks=%d games=%d frames=%d fps=%.1f" % [
 			"host" if Session.is_host() else "client",
-			peers_seen, remote_moved, winner_id, spectated, rocks_seen,
+			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
 	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
@@ -855,6 +859,11 @@ func _verify_network() -> Array:
 	if died_locally and not spectated:
 		failures.append("dying did not put this player into the spectator camera")
 	var floor_count := SnakeMatch.minimum_rocks(peers_seen)
+	var wanted_arena := GameConfig.arena_for(peers_seen)
+	if arena_seen.distance_to(wanted_arena) > 0.1:
+		failures.append("arena was %.0fx%.0f, expected %.0fx%.0f for %d players" % [
+			arena_seen.x, arena_seen.y, wanted_arena.x, wanted_arena.y, peers_seen,
+		])
 	if rocks_seen < floor_count:
 		failures.append("the arena arrived with %d rock(s), fewer than %d" % [
 			rocks_seen, floor_count,
@@ -921,6 +930,10 @@ func _verify_solo(stats: Dictionary) -> Array:
 		if not (simple < smooth and smooth < fine):
 			failures.append("graphics modes did not order themselves: %s" % str(quality_faces))
 
+	if arena_seen.distance_to(GameConfig.arena_for(1)) > 0.1:
+		failures.append("solo arena was %.0fx%.0f, expected the standard one" % [
+			arena_seen.x, arena_seen.y,
+		])
 	if rocks_seen < SnakeMatch.minimum_rocks(1):
 		failures.append("only %d rock(s) on the arena" % rocks_seen)
 	elif rock_largest - rock_smallest < 0.5:

@@ -10,6 +10,18 @@ extends RefCounted
 const BOARD_WIDTH := 30.0
 const BOARD_HEIGHT := 20.0
 
+## The arena grows with the crowd. Two players get half as much floor again
+## as one, three get twice, and so on - room enough that a second snake is
+## an opponent to hunt rather than a wall you back into at once. Both sides
+## grow by the same factor, so the arena keeps its shape and everything
+## framed against it - the cameras, the spawn circle - still fits.
+const BOARD_GROWTH_PER_PLAYER := 0.5
+
+
+static func arena_for(players: int) -> Vector2:
+	var floor_scale := sqrt(1.0 + BOARD_GROWTH_PER_PLAYER * float(maxi(1, players) - 1))
+	return Vector2(BOARD_WIDTH * floor_scale, BOARD_HEIGHT * floor_scale)
+
 ## The snake never stops: it cruises forward and only turns.
 const SNAKE_SPEED := 5.2          # world units per second
 const TURN_RATE := 3.1            # radians per second while a turn is held

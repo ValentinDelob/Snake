@@ -53,6 +53,18 @@ func _init(arena_width: float, arena_height: float, seed_value: int = 0) -> void
 
 
 # --------------------------------------------------------------------------- #
+## Lay the arena out at a new size. The snakes carry their own bounds for
+## collisions, so they have to be told as well.
+func resize(new_width: float, new_height: float) -> void:
+	if is_equal_approx(width, new_width) and is_equal_approx(height, new_height):
+		return
+	width = new_width
+	height = new_height
+	for id: int in snakes:
+		snakes[id].width = new_width
+		snakes[id].height = new_height
+
+
 func add_snake(id: int) -> SnakeWorld:
 	var snake := SnakeWorld.new(width, height)
 	snakes[id] = snake

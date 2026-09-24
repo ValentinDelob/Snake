@@ -470,7 +470,10 @@ func _on_peer_joined(id: int) -> void:
 		_refresh_lobby()
 	if Session.is_host() and state == State.PLAY:
 		# Latecomers watch the round that is already running.
-		_start_round.rpc_id(id, game_match.snakes.keys(), true, game_match.obstacle_data())
+		_start_round.rpc_id(
+			id, game_match.snakes.keys(), true, game_match.obstacle_data(),
+			Vector2(game_match.width, game_match.height)
+		)
 
 
 func _on_peer_left(id: int) -> void:
@@ -503,15 +506,23 @@ func _start_match() -> void:
 	# The arena is built here, then handed out: every player must be looking
 	# at the same rocks or the host's rulings would make no sense on screen.
 	_begin_round(game_match.snakes.keys(), false)
-	_start_round.rpc(game_match.snakes.keys(), false, game_match.obstacle_data())
+	_start_round.rpc(
+		game_match.snakes.keys(), false, game_match.obstacle_data(),
+		Vector2(game_match.width, game_match.height)
+	)
 
 
 @rpc("authority", "call_remote", "reliable")
-func _start_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array) -> void:
-	_begin_round(ids, as_spectator, rocks)
+func _start_round(
+	ids: Array, as_spectator: bool, rocks: PackedFloat32Array, arena: Vector2
+) -> void:
+	_begin_round(ids, as_spectator, rocks, arena)
 
 
-func _begin_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array = PackedFloat32Array()) -> void:
+func _begin_round(
+	ids: Array, as_spectator: bool,
+	rocks: PackedFloat32Array = PackedFloat32Array(), arena := Vector2.ZERO
+) -> void:
 	# Only a network client mirrors somebody else's match. Offline and host
 	# both judge their own, which is what solo has always done.
 	if Session.role == Session.Role.CLIENT:
@@ -521,6 +532,11 @@ func _begin_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array = Pa
 		game_match.authoritative = false
 	else:
 		game_match.authoritative = true
+
+	# The arena is cut to the number of players: more snakes, more floor.
+	# A client takes the host's word for it rather than working it out
+	# again, so nobody plays on a board of their own.
+	_resize_arena(arena if arena != Vector2.ZERO else GameConfig.arena_for(game_match.snakes.size()))
 	game_match.start()
 	if _start_score > 0:
 		for id: int in game_match.snakes:
@@ -552,6 +568,19 @@ func _begin_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array = Pa
 	_hud.set_bar_visible(true)
 	_set_state(State.PLAY)
 	Journal.info("game", "Round started with %d snake(s)" % game_match.snakes.size())
+
+
+## Lay the arena out at a new size: the rules, the scenery and the cameras
+## all have to agree on where the walls are.
+func _resize_arena(size: Vector2) -> void:
+	if is_equal_approx(game_match.width, size.x) and is_equal_approx(game_match.height, size.y):
+		return
+	game_match.resize(size.x, size.y)
+	_board.build(size.x, size.y)
+	_camera.set_arena(size.x, size.y)
+	Journal.info("game", "Arena resized to %.0fx%.0f for %d player(s)" % [
+		size.x, size.y, game_match.snakes.size(),
+	])
 
 
 ## Client to host: my steering for this step.

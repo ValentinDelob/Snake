@@ -15,9 +15,8 @@ func _initialize() -> void:
 		var failures := 0
 		var short := 0
 		for round_index in range(ROUNDS):
-			var game_match := SnakeMatch.new(
-				GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, round_index + 1
-			)
+			var arena := GameConfig.arena_for(players)
+			var game_match := SnakeMatch.new(arena.x, arena.y, round_index + 1)
 			for id in range(players):
 				game_match.add_snake(id + 1)
 			game_match.start()
@@ -25,8 +24,10 @@ func _initialize() -> void:
 			if game_match.obstacles.size() < SnakeMatch.minimum_rocks(players):
 				short += 1
 			failures += _spawn_failures(game_match)
-		print("%d player(s): fewest rocks %d (floor %d), %d short, %d spawn faults, %d arenas" % [
-			players, fewest, SnakeMatch.minimum_rocks(players), short, failures, ROUNDS,
+		var arena := GameConfig.arena_for(players)
+		print("%d player(s): %.0fx%.0f, fewest rocks %d (floor %d), %d short, %d spawn faults, %d arenas" % [
+			players, arena.x, arena.y, fewest,
+			SnakeMatch.minimum_rocks(players), short, failures, ROUNDS,
 		])
 	quit()
 

@@ -106,7 +106,7 @@ func show_arena(delta: float) -> void:
 	projection = PROJECTION_PERSPECTIVE
 	fov = MODE_FOV[Mode.OVERVIEW]
 	var centre := Vector3(_arena.x * 0.5, 0.0, _arena.y * 0.5)
-	var wanted := centre + Vector3(0.0, 22.0, 15.0)
+	var wanted := centre + _overview_offset(_arena.y)
 	if not _settled:
 		_eye = wanted
 		_look = centre
@@ -158,12 +158,12 @@ func _desired_pose(world: SnakeWorld) -> Array:
 
 	if _preview:
 		var board_center := Vector3(width / 2.0, 0.0, height / 2.0)
-		return [board_center + Vector3(0.0, 22.0, 15.0), board_center]
+		return [board_center + _overview_offset(height), board_center]
 
 	match mode:
 		Mode.OVERVIEW:
 			var center := Vector3(width / 2.0, 0.0, height / 2.0)
-			return [center + Vector3(0.0, 22.0, 15.0), center]
+			return [center + _overview_offset(height), center]
 		Mode.CHASE:
 			var forward := Vector3(world.direction().x, 0.0, world.direction().y)
 			return [
@@ -178,6 +178,13 @@ func _desired_pose(world: SnakeWorld) -> Array:
 				clampf(head.z, 4.5, maxf(4.5, height - 4.5))
 			)
 			return [look + Vector3(0.0, 12.0, 8.0), look]
+
+
+## How far back the overview sits. It has to grow with the arena, or a big
+## one would spill out of frame; the numbers are the old fixed ones divided
+## by the standard arena, so a standard one looks exactly as it did.
+func _overview_offset(arena_height: float) -> Vector3:
+	return Vector3(0.0, arena_height * 1.1, arena_height * 0.75)
 
 
 func _apply_flat(world: SnakeWorld) -> void:
