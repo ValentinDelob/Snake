@@ -145,6 +145,14 @@ func _parse_arguments() -> void:
 				lose_after = float(value)
 			"--expect-timeout":
 				_pending_expect_timeout = true
+			"--start-score":
+				_start_score = int(value)
+			"--profile":
+				_profiler = FrameProfiler.new()
+				# Vsync pins every frame to 16.7 ms and hides the very thing
+				# being measured, so a profiling run is left uncapped.
+				DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+				Engine.max_fps = 0
 	if _max_steps <= 0:
 		_max_steps = int(GameConfig.SIM_HZ * 60.0)  # one minute of simulation
 	if _driver != null:
@@ -155,6 +163,11 @@ func _parse_arguments() -> void:
 var _pending_host := false
 var _pending_join := ""
 var _pending_expect_timeout := false
+## Measuring aid: a round that starts with points already on the board is a
+## round with a long snake, which is when the game works hardest.
+var _start_score := 0
+## Only built by --profile: measuring costs a little, so it is opt in.
+var _profiler: FrameProfiler = null
 var _last_menu_message := ""
 var _last_death_cause: SnakeWorld.Outcome = SnakeWorld.Outcome.MOVING
 var _score_on_bar := -1          # the score the bar is already showing
@@ -184,6 +197,8 @@ func _process(delta: float) -> void:
 	if _driver != null:
 		_driver.on_frame(self)
 
+	var clock: int = _profiler.begin_frame() if _profiler != null else 0
+
 	if state == State.PLAY:
 		_play_time += delta
 		_flash = maxf(0.0, _flash - delta * 3.0)
@@ -200,9 +215,18 @@ func _process(delta: float) -> void:
 		if _net_autostart <= 0.0 and Session.players.size() > 1:
 			_start_match()
 
+	if _profiler != null:
+		clock = _profiler.mark("sim", clock)
 	_update_camera(delta)
+	if _profiler != null:
+		clock = _profiler.mark("camera", clock)
 	_board.refresh(game_match, Session.local_id(), _elapsed, _flash)
+	if _profiler != null:
+		clock = _profiler.mark("board", clock)
 	_refresh_hud()
+	if _profiler != null:
+		clock = _profiler.mark("hud", clock)
+		_profiler.end_frame(delta, state == State.PLAY, _play_time)
 
 
 func _update_camera(delta: float) -> void:
@@ -480,6 +504,10 @@ func _begin_round(ids: Array, as_spectator: bool, rocks: PackedFloat32Array = Pa
 	else:
 		game_match.authoritative = true
 	game_match.start()
+	if _start_score > 0:
+		for id: int in game_match.snakes:
+			game_match.snakes[id].add_score(_start_score)
+			game_match.snakes[id].body_length = game_match.snakes[id].target_body_length
 	_score_on_bar = -1
 	if not rocks.is_empty():
 		game_match.set_obstacles(rocks)
@@ -808,6 +836,8 @@ func report_error(message: String) -> void:
 func request_quit(reason: String) -> void:
 	stats["reason"] = reason
 	stats["fps"] = float(stats["frames"]) / maxf(0.001, _elapsed)
+	if _profiler != null:
+		_profiler.report()
 
 	var exit_code := 0
 	if _driver != null:
