@@ -14,6 +14,8 @@ const DEFAULTS := {
 	"camera": "follow",
 	"address": "127.0.0.1",
 	"quality": "smooth",
+	"vsync": true,
+	"fps_limit": 0,
 }
 
 var data: Dictionary = DEFAULTS.duplicate()

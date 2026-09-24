@@ -101,11 +101,14 @@ func _ready() -> void:
 		str(PlayerProfile.get_preference("quality"))
 	)
 	Journal.info("game", "Graphics mode: %s" % GameConfig.quality_mode()["name"])
+	_apply_display_settings()
 
 	_hud.solo_requested.connect(_start_solo)
 	_hud.host_requested.connect(_start_hosting)
 	_hud.join_requested.connect(_join_session)
 	_hud.quality_chosen.connect(_choose_quality)
+	_hud.vsync_toggled.connect(_toggle_vsync)
+	_hud.fps_limit_cycled.connect(_cycle_fps_limit)
 	_hud.quit_requested.connect(func(): request_quit("menu-quit"))
 
 	Session.peer_joined.connect(_on_peer_joined)
@@ -155,7 +158,9 @@ func _parse_arguments() -> void:
 			"--profile":
 				_profiler = FrameProfiler.new()
 				# Vsync pins every frame to 16.7 ms and hides what each part
-				# of the frame costs, so a profiling run is left uncapped.
+				# of the frame costs, so a profiling run is left uncapped and
+				# ignores what the player chose.
+				_display_locked = true
 				DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 				Engine.max_fps = 0
 			"--profile-capped":
@@ -175,6 +180,8 @@ var _pending_expect_timeout := false
 ## Measuring aid: a round that starts with points already on the board is a
 ## round with a long snake, which is when the game works hardest.
 var _start_score := 0
+## True while a profiling run is driving the display itself.
+var _display_locked := false
 ## Only built by --profile: measuring costs a little, so it is opt in.
 var _profiler: FrameProfiler = null
 var _last_menu_message := ""
@@ -626,6 +633,36 @@ func _set_state(next_state: State) -> void:
 		return
 	Journal.info("game", "State: %s -> %s" % [STATE_NAMES[state], STATE_NAMES[next_state]])
 	state = next_state
+
+
+## Hand the window whatever the player asked for. A profiling run keeps
+## its own settings, since measuring is the whole point of that run.
+func _apply_display_settings() -> void:
+	if _display_locked:
+		return
+	var vsync: bool = bool(PlayerProfile.get_preference("vsync"))
+	var limit: int = int(PlayerProfile.get_preference("fps_limit"))
+	DisplayServer.window_set_vsync_mode(
+		DisplayServer.VSYNC_ENABLED if vsync else DisplayServer.VSYNC_DISABLED
+	)
+	Engine.max_fps = maxi(0, limit)
+	Journal.info("game", "Display: vsync %s, fps limit %s" % [
+		"on" if vsync else "off", GameConfig.fps_limit_label(limit),
+	])
+
+
+func _toggle_vsync() -> void:
+	PlayerProfile.set_preference("vsync", not bool(PlayerProfile.get_preference("vsync")))
+	_apply_display_settings()
+	_hud.refresh_menu_page()
+
+
+func _cycle_fps_limit() -> void:
+	PlayerProfile.set_preference(
+		"fps_limit", GameConfig.next_fps_limit(int(PlayerProfile.get_preference("fps_limit")))
+	)
+	_apply_display_settings()
+	_hud.refresh_menu_page()
 
 
 ## The player picked a graphics mode: remember it and let the menu redraw.

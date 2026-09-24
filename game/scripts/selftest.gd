@@ -76,6 +76,9 @@ var _floor_stage := 0
 
 ## graphics modes: name -> faces the body was made of
 var quality_faces := {}
+## frame pacing: limit -> did the engine take it, and both vsync states
+var fps_limits_seen := {}
+var vsync_states_seen := {}
 
 # rocks
 var rocks_seen := 0
@@ -412,6 +415,7 @@ func _run_cameras(game, now: float) -> void:
 			release(camera_schedule[mark])
 			return
 	if _done_marks.size() >= camera_schedule.size() and since >= 4.6:
+		_check_display_settings(game)
 		_enter_phase(Phase.TURNS, now)
 
 
@@ -426,6 +430,22 @@ func _walk_quality_modes(game, since: float) -> void:
 	var faces: int = game.board_view().face_count(Session.local_id())
 	if faces > 0:
 		quality_faces[GameConfig.quality_mode()["name"]] = faces
+
+
+## Walk every frame rate ceiling and both vsync states, the way the menu
+## does, and check the engine really took what it was given. The walk ends
+## where it started, so the rest of the run is unaffected.
+func _check_display_settings(game) -> void:
+	for _index in range(GameConfig.FPS_LIMITS.size()):
+		game._cycle_fps_limit()
+		var wanted: int = int(PlayerProfile.get_preference("fps_limit"))
+		fps_limits_seen[wanted] = Engine.max_fps == maxi(0, wanted)
+	for _index in range(2):
+		game._toggle_vsync()
+		vsync_states_seen[bool(PlayerProfile.get_preference("vsync"))] = true
+	Journal.info("selftest", "display settings walked: limits %s, vsync %s" % [
+		str(fps_limits_seen), str(vsync_states_seen.keys()),
+	])
 
 
 ## Hold LEFT, then RIGHT, and check the heading actually turned each way.
@@ -751,11 +771,11 @@ func summary(game) -> String:
 			peers_seen, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
-		str(quality_faces),
+		str(quality_faces), fps_limits_seen.size(), vsync_states_seen.size(),
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
@@ -847,6 +867,14 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the slow down never ran to completion")
 	elif absf(multiplier_after_slow - 1.0) > 0.05:
 		failures.append("speed stayed at x%.2f after the slow down" % multiplier_after_slow)
+
+	for limit: int in GameConfig.FPS_LIMITS:
+		if not fps_limits_seen.has(limit):
+			failures.append("frame rate ceiling never tried: %s" % str(limit))
+		elif not fps_limits_seen[limit]:
+			failures.append("the engine did not take the ceiling %s" % str(limit))
+	if vsync_states_seen.size() < 2:
+		failures.append("vsync was never seen both ways")
 
 	for mode: Dictionary in GameConfig.QUALITY_MODES:
 		if not quality_faces.has(mode["name"]):

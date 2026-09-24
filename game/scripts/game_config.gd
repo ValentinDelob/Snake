@@ -80,6 +80,21 @@ const QUALITY_MODES := [
 ## player picks another one in the menu.
 static var quality: Quality = Quality.SMOOTH
 
+## Frame rate ceilings offered in the menu. Zero means no ceiling at all:
+## the game runs as fast as the machine allows, which is what somebody with
+## a fast screen and vsync off is after.
+const FPS_LIMITS := [0, 30, 60, 120, 144, 240]
+
+
+static func fps_limit_label(limit: int) -> String:
+	return "UNLIMITED" if limit <= 0 else str(limit)
+
+
+## The next ceiling in the list, wrapping round.
+static func next_fps_limit(limit: int) -> int:
+	var index := FPS_LIMITS.find(limit)
+	return FPS_LIMITS[wrapi(index + 1, 0, FPS_LIMITS.size())]
+
 
 static func quality_mode() -> Dictionary:
 	return QUALITY_MODES[clampi(int(quality), 0, QUALITY_MODES.size() - 1)]

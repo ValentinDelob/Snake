@@ -7,6 +7,8 @@ signal solo_requested()
 signal host_requested()
 signal join_requested(address: String)
 signal quality_chosen(mode: int)
+signal vsync_toggled()
+signal fps_limit_cycled()
 signal quit_requested()
 
 ## The interface: a slim top bar while playing, and a centred card for the
@@ -409,7 +411,7 @@ func _show_menu_page(page: MenuPage) -> void:
 				[["ESC"], "back"],
 			])
 		MenuPage.GRAPHICS:
-			_subtitle.text = "how finely the snake's body is cut"
+			_subtitle.text = "how the snake is cut, and how the frames are paced"
 			_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
 			_set_chips([])
 			var entries: Array = []
@@ -423,6 +425,18 @@ func _show_menu_page(page: MenuPage) -> void:
 					"primary": chosen,
 					"action": func(): quality_chosen.emit(index),
 				})
+			# How the frames are paced belongs on the same page: it is the
+			# other half of how smooth the game feels.
+			entries.append({
+				"text": "VSYNC  %s" % ("ON" if PlayerProfile.get_preference("vsync") else "OFF"),
+				"action": func(): vsync_toggled.emit(),
+			})
+			entries.append({
+				"text": "FPS LIMIT  %s" % GameConfig.fps_limit_label(
+					int(PlayerProfile.get_preference("fps_limit"))
+				),
+				"action": func(): fps_limit_cycled.emit(),
+			})
 			entries.append({"text": "BACK", "action": func(): _show_menu_page(MenuPage.MAIN)})
 			_set_buttons(entries)
 			_set_hints([
