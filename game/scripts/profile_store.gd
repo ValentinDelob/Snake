@@ -16,6 +16,7 @@ const DEFAULTS := {
 	"quality": "smooth",
 	"vsync": true,
 	"fps_limit": 0,
+	"debug": false,
 }
 
 var data: Dictionary = DEFAULTS.duplicate()

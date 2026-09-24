@@ -109,6 +109,7 @@ func _ready() -> void:
 	_hud.quality_chosen.connect(_choose_quality)
 	_hud.vsync_toggled.connect(_toggle_vsync)
 	_hud.fps_limit_cycled.connect(_cycle_fps_limit)
+	_hud.debug_toggled.connect(_toggle_debug)
 	_hud.quit_requested.connect(func(): request_quit("menu-quit"))
 
 	Session.peer_joined.connect(_on_peer_joined)
@@ -279,6 +280,7 @@ func _refresh_hud() -> void:
 		maxi(PlayerProfile.high_score(), score),
 		"%s %s" % [_camera.view_name().to_upper(), _camera.mode_name()]
 	)
+	_hud.set_debug(bool(PlayerProfile.get_preference("debug")))
 	if snake == null:
 		_hud.set_item(0, 0, 0.0, 1.0)
 	else:
@@ -651,6 +653,16 @@ func _apply_display_settings() -> void:
 	])
 
 
+## The debug readout is a setting like any other: remembered, and on from
+## the moment it is switched on.
+func _toggle_debug() -> void:
+	PlayerProfile.set_preference("debug", not bool(PlayerProfile.get_preference("debug")))
+	Journal.info("game", "Debug readout %s" % (
+		"on" if PlayerProfile.get_preference("debug") else "off"
+	))
+	_hud.refresh_menu_page()
+
+
 func _toggle_vsync() -> void:
 	PlayerProfile.set_preference("vsync", not bool(PlayerProfile.get_preference("vsync")))
 	_apply_display_settings()
@@ -880,6 +892,10 @@ func camera_rig() -> CameraRig:
 
 func board_view() -> BoardView:
 	return _board
+
+
+func hud() -> SnakeHud:
+	return _hud
 
 
 func report_error(message: String) -> void:

@@ -9,6 +9,7 @@ signal join_requested(address: String)
 signal quality_chosen(mode: int)
 signal vsync_toggled()
 signal fps_limit_cycled()
+signal debug_toggled()
 signal quit_requested()
 
 ## The interface: a slim top bar while playing, and a centred card for the
@@ -61,6 +62,10 @@ var _menu_best := 0
 var _menu_games := 0
 var _menu_message := ""
 var _saved_address := ""
+
+var _debug_panel: PanelContainer
+var _debug_fps: Label
+var _shown_fps := -1
 
 var _shown_score := -1
 var _breath := 0.0
@@ -192,6 +197,25 @@ func _build_top_bar() -> void:
 	_players_box.add_theme_constant_override("separation", 4)
 	_top_bar.add_child(_players_box)
 
+	# The debug readout. One line for now; it is a column so the next thing
+	# worth watching can simply be added under it.
+	_debug_panel = _pill()
+	_debug_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_debug_panel.offset_left = 22
+	_debug_panel.offset_top = -74
+	_debug_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_debug_panel.visible = false
+	_top_bar.add_child(_debug_panel)
+
+	var debug_column := VBoxContainer.new()
+	debug_column.add_theme_constant_override("separation", 2)
+	_debug_panel.add_child(debug_column)
+
+	var debug_caption := _label("DEBUG", 11, GameConfig.DIM_COLOR)
+	debug_column.add_child(debug_caption)
+	_debug_fps = _label("FPS  --", 16, GameConfig.ACCENT_COLOR)
+	debug_column.add_child(_debug_fps)
+
 	_spectator_label = _label("", 16, GameConfig.FROST_COLOR)
 	_spectator_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_spectator_label.offset_top = -70
@@ -208,6 +232,27 @@ func set_stats(score: int, best: int, mode_text: String) -> void:
 		_punch(_score_value)
 	_best_value.text = str(best)
 	_mode_chip.text = mode_text
+
+
+## Show or hide the debug readout, and keep it fed. The frame rate is the
+## engine's own count, so it measures the whole frame rather than the part
+## the game happens to time.
+func set_debug(enabled: bool) -> void:
+	if _debug_panel.visible != enabled:
+		_debug_panel.visible = enabled
+		_shown_fps = -1
+	if not enabled:
+		return
+	var fps := Engine.get_frames_per_second()
+	if fps != _shown_fps:
+		_shown_fps = fps
+		_debug_fps.text = "FPS  %d" % fps
+
+
+## What the debug readout says, or nothing at all when it is switched off.
+## The self-test reads this rather than guessing at the panel.
+func debug_readout() -> String:
+	return _debug_fps.text if _debug_panel.visible else ""
 
 
 ## Call out a jump in the score: "+3" beside it, in its own colour, fading
@@ -387,10 +432,7 @@ func _show_menu_page(page: MenuPage) -> void:
 			_set_buttons([
 				{"text": "PLAY SOLO", "primary": true, "action": solo_requested},
 				{"text": "MULTIPLAYER", "action": func(): _show_menu_page(MenuPage.MULTIPLAYER)},
-				{
-					"text": "GRAPHICS  %s" % GameConfig.quality_mode()["label"],
-					"action": func(): _show_menu_page(MenuPage.GRAPHICS),
-				},
+				{"text": "GRAPHICS", "action": func(): _show_menu_page(MenuPage.GRAPHICS)},
 				{"text": "QUIT", "action": quit_requested},
 			])
 			_set_hints([
@@ -436,6 +478,10 @@ func _show_menu_page(page: MenuPage) -> void:
 					int(PlayerProfile.get_preference("fps_limit"))
 				),
 				"action": func(): fps_limit_cycled.emit(),
+			})
+			entries.append({
+				"text": "DEBUG  %s" % ("ON" if PlayerProfile.get_preference("debug") else "OFF"),
+				"action": func(): debug_toggled.emit(),
 			})
 			entries.append({"text": "BACK", "action": func(): _show_menu_page(MenuPage.MAIN)})
 			_set_buttons(entries)

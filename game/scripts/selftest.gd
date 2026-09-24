@@ -79,6 +79,10 @@ var quality_faces := {}
 ## frame pacing: limit -> did the engine take it, and both vsync states
 var fps_limits_seen := {}
 var vsync_states_seen := {}
+## debug readout: the frame rate it showed, and whether it went away again
+var debug_fps_shown := 0
+var debug_hidden := false
+var _debug_step := 0
 
 # rocks
 var rocks_seen := 0
@@ -407,6 +411,7 @@ func _enter_phase(next_phase: Phase, now: float) -> void:
 func _run_cameras(game, now: float) -> void:
 	var since := now - _phase_started
 	_walk_quality_modes(game, since)
+	_watch_debug_readout(game, since)
 	for mark: float in camera_schedule:
 		if since >= mark and not _done_marks.has(mark):
 			_done_marks[mark] = true
@@ -430,6 +435,31 @@ func _walk_quality_modes(game, since: float) -> void:
 	var faces: int = game.board_view().face_count(Session.local_id())
 	if faces > 0:
 		quality_faces[GameConfig.quality_mode()["name"]] = faces
+
+
+## Switch the debug readout on, check it really counts frames, then switch
+## it off again and check it goes away.
+func _watch_debug_readout(game, since: float) -> void:
+	if since >= 1.0 and _debug_step == 0:
+		_debug_step = 1
+		if not bool(PlayerProfile.get_preference("debug")):
+			game._toggle_debug()
+		Journal.info("selftest", "debug readout switched on")
+	elif since >= 2.0 and _debug_step == 1:
+		var text: String = game.hud().debug_readout()
+		if text.begins_with("FPS") and text.to_int() >= 0:
+			var counted := int(text.split("  ")[-1])
+			if counted > 0:
+				debug_fps_shown = counted
+				_debug_step = 2
+				Journal.info("selftest", "debug readout says %s" % text)
+	elif since >= 3.2 and _debug_step == 2:
+		_debug_step = 3
+		game._toggle_debug()
+	elif since >= 3.6 and _debug_step == 3:
+		_debug_step = 4
+		debug_hidden = game.hud().debug_readout() == ""
+		Journal.info("selftest", "debug readout hidden again: %s" % debug_hidden)
 
 
 ## Walk every frame rate ceiling and both vsync states, the way the menu
@@ -771,11 +801,12 @@ func summary(game) -> String:
 			peers_seen, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
 		str(quality_faces), fps_limits_seen.size(), vsync_states_seen.size(),
+		debug_fps_shown, debug_hidden,
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
@@ -875,6 +906,10 @@ func _verify_solo(stats: Dictionary) -> Array:
 			failures.append("the engine did not take the ceiling %s" % str(limit))
 	if vsync_states_seen.size() < 2:
 		failures.append("vsync was never seen both ways")
+	if debug_fps_shown <= 0:
+		failures.append("the debug readout never counted a frame rate")
+	if not debug_hidden:
+		failures.append("the debug readout did not go away when switched off")
 
 	for mode: Dictionary in GameConfig.QUALITY_MODES:
 		if not quality_faces.has(mode["name"]):
