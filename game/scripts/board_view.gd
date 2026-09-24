@@ -18,7 +18,7 @@ var _head_lamp: OmniLight3D
 var _bolt: MeshInstance3D
 var _bolt_lamp: OmniLight3D
 var _ghost: MeshInstance3D
-var _ghost_halo: MeshInstance3D
+var _ghost_sparkles: GPUParticles3D
 var _ghost_lamp: OmniLight3D
 var _ghost_material: StandardMaterial3D
 var _crate: MeshInstance3D
@@ -191,21 +191,28 @@ func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 
 	var has_ghost := game_match.has_ground(SnakeWorld.Ground.PHASE)
 	_ghost.visible = has_ghost
-	_ghost_halo.visible = has_ghost
 	_ghost_lamp.visible = has_ghost
+	_ghost_sparkles.visible = has_ghost
 	if has_ghost:
 		var spot := game_match.ground_position(SnakeWorld.Ground.PHASE)
-		var bob := 0.9 + 0.14 * sin(elapsed * 2.2)
+		var bob := 0.32 + 0.1 * sin(elapsed * 2.2)
+		# Upright, always: the only things that move are the spin and a slow
+		# float, the way a ghost ought to hang over the floor.
 		_ghost.position = Vector3(spot.x, bob, spot.y)
-		# Standing on edge and turning, so it catches the light from every
-		# camera in the game rather than only from above.
-		_ghost.rotation = Vector3(PI * 0.5, elapsed * 2.4, 0.0)
-		_ghost_halo.position = Vector3(spot.x, 0.12, spot.y)
-		_ghost_halo.rotation = Vector3(PI * 0.5, -elapsed * 1.1, 0.0)
+		_ghost.rotation = Vector3(0.0, elapsed * 1.5, 0.0)
+		# Placed first, started second: a spark born before the emitter has
+		# been put down appears at the corner of the arena.
+		_ghost_sparkles.position = Vector3(spot.x, bob + 0.35, spot.y)
+		if not _ghost_sparkles.emitting:
+			_ghost_sparkles.restart()
+			_ghost_sparkles.emitting = true
 		var shine := 0.6 + 0.4 * sin(elapsed * 4.4)
-		_ghost_material.emission_energy_multiplier = 1.6 + 1.6 * shine
-		_ghost_lamp.position = Vector3(spot.x, bob + 0.3, spot.y)
+		_ghost_material.emission_energy_multiplier = 0.35 + 0.5 * shine
+		_ghost_lamp.position = Vector3(spot.x, bob + 0.5, spot.y)
 		_ghost_lamp.light_energy = 1.4 + 1.1 * shine
+
+	elif _ghost_sparkles.emitting:
+		_ghost_sparkles.emitting = false
 
 	var has_crate := game_match.has_ground(SnakeWorld.Ground.MYSTERY)
 	_crate.visible = has_crate
@@ -213,9 +220,9 @@ func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 	if has_crate:
 		var spot := game_match.ground_position(SnakeWorld.Ground.MYSTERY)
 		_crate.position = Vector3(spot.x, 0.85 + 0.12 * sin(elapsed * 2.0), spot.y)
-		# Tilted back towards the cameras, which all look down at the arena,
-		# and turning slowly so the mark stays readable.
-		_crate.rotation = Vector3(-1.0, elapsed * 0.7, 0.0)
+		# Standing square on the floor like everything else, turning slowly
+		# so the mark on it stays readable from any camera.
+		_crate.rotation = Vector3(0.0, elapsed * 0.7, 0.0)
 		# The colour drifts: you cannot tell what is inside by looking at it.
 		var drift := 0.5 + 0.5 * sin(elapsed * 1.6)
 		var color := GameConfig.MYSTERY_COLOR.lerp(GameConfig.FROST_COLOR, drift)
@@ -423,50 +430,63 @@ func _build_props() -> void:
 	_bolt_lamp.visible = false
 	add_child(_bolt_lamp)
 
-	# The ghost ring. It is the rarest thing on the arena, so it is also the
-	# brightest: a gold torus standing on edge inside a flat halo, under a
-	# light strong enough to be spotted from the far wall.
-	var ghost_mesh := TorusMesh.new()
-	ghost_mesh.inner_radius = 0.26
-	ghost_mesh.outer_radius = 0.42
-	ghost_mesh.rings = 18
-	ghost_mesh.ring_segments = 10
-
+	# The ghost. It is the rarest thing on the arena, so it is also the most
+	# alive: a little sheeted figure standing upright on the floor, turning
+	# slowly on the spot, shimmering gold and throwing off sparks. Like every
+	# other item it never tips over - only the spin is animated.
 	_ghost_material = StandardMaterial3D.new()
-	_ghost_material.albedo_color = GameConfig.PHASE_COLOR
-	_ghost_material.metallic = 0.4
-	_ghost_material.roughness = 0.2
+	_ghost_material.albedo_color = GameConfig.PHASE_PALE_COLOR
+	_ghost_material.metallic = 0.25
+	_ghost_material.roughness = 0.25
 	_ghost_material.emission_enabled = true
-	_ghost_material.emission = GameConfig.PHASE_PALE_COLOR
-	_ghost_material.emission_energy_multiplier = 2.2
+	_ghost_material.emission = GameConfig.PHASE_COLOR
+	# Gently lit rather than blown out: at full blast the silhouette washes
+	# into a white blob and the hem and the eyes disappear with it.
+	_ghost_material.emission_energy_multiplier = 0.5
 
 	_ghost = MeshInstance3D.new()
-	_ghost.name = "GhostRing"
-	_ghost.mesh = ghost_mesh
+	_ghost.name = "Ghost"
+	_ghost.mesh = _build_ghost_mesh()
 	_ghost.material_override = _ghost_material
 	_ghost.visible = false
 	add_child(_ghost)
 
-	var halo_mesh := TorusMesh.new()
-	halo_mesh.inner_radius = 0.6
-	halo_mesh.outer_radius = 0.78
-	halo_mesh.rings = 20
-	halo_mesh.ring_segments = 6
-	var halo_material := StandardMaterial3D.new()
-	halo_material.albedo_color = Color(
-		GameConfig.PHASE_COLOR.r, GameConfig.PHASE_COLOR.g, GameConfig.PHASE_COLOR.b, 0.5
-	)
-	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	# Eyes, so it reads as a ghost at a glance and not as a bell. They ride
+	# with it, which is what makes the spin readable.
+	var eye_mesh := SphereMesh.new()
+	eye_mesh.radius = 0.065
+	eye_mesh.height = 0.13
+	eye_mesh.radial_segments = 8
+	eye_mesh.rings = 4
+	var eye_material := StandardMaterial3D.new()
+	eye_material.albedo_color = Color(0.1, 0.08, 0.02)
+	eye_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	for side in [-1.0, 1.0]:
+		var eye := MeshInstance3D.new()
+		eye.mesh = eye_mesh
+		eye.material_override = eye_material
+		eye.position = Vector3(side * 0.1, 0.73, 0.2)
+		_ghost.add_child(eye)
 
-	_ghost_halo = MeshInstance3D.new()
-	_ghost_halo.name = "GhostHalo"
-	_ghost_halo.mesh = halo_mesh
-	_ghost_halo.material_override = halo_material
-	_ghost_halo.rotation = Vector3(PI * 0.5, 0.0, 0.0)
-	_ghost_halo.visible = false
-	add_child(_ghost_halo)
+	# Two stubby arms. At the distance the cameras keep, the silhouette is
+	# all anybody reads, and these are what turn a bell into a ghost.
+	var arm_mesh := SphereMesh.new()
+	arm_mesh.radius = 0.09
+	arm_mesh.height = 0.18
+	arm_mesh.radial_segments = 8
+	arm_mesh.rings = 4
+	for side in [-1.0, 1.0]:
+		var arm := MeshInstance3D.new()
+		arm.mesh = arm_mesh
+		arm.material_override = _ghost_material
+		arm.position = Vector3(side * 0.26, 0.42, 0.0)
+		arm.scale = Vector3(1.0, 0.8, 1.0)
+		_ghost.add_child(arm)
+
+	_ghost_sparkles = _build_sparkles()
+	_ghost_sparkles.emitting = false
+	_ghost_sparkles.visible = false
+	add_child(_ghost_sparkles)
 
 	_ghost_lamp = OmniLight3D.new()
 	_ghost_lamp.name = "GhostLamp"
@@ -496,6 +516,107 @@ func _build_props() -> void:
 
 
 ## A lightning bolt: a flat zigzag given a bit of thickness.
+## A little sheeted ghost: a domed head, straight sides and a scalloped
+## hem, closed underneath so it is never hollow from below.
+func _build_ghost_mesh() -> ArrayMesh:
+	var radial := 14
+	var rings := 12
+	var body_radius := 0.25
+	var height := 0.95
+	var dome := 0.38          # share of the height the head takes
+	var scallops := 5.0
+	var hem := 0.14           # how deep the wavy hem cuts, in silhouette
+
+	var tool := SurfaceTool.new()
+	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	var grid: Array = []
+	for ring in range(rings + 1):
+		var t := float(ring) / rings
+		var radius := body_radius
+		if t < dome:
+			var lift := 1.0 - t / dome        # 1 at the crown, 0 where the sides start
+			radius = body_radius * sqrt(maxf(0.0, 1.0 - lift * lift))
+		var row := PackedVector3Array()
+		for index in range(radial):
+			var angle := TAU * index / radial
+			var y := height * (1.0 - t)
+			if ring == rings:
+				# The hem waves, which is what makes it a ghost and not a bell.
+				y += hem * (0.5 + 0.5 * cos(angle * scallops))
+			row.append(Vector3(cos(angle) * radius, y, sin(angle) * radius))
+		grid.append(row)
+
+	for ring in range(rings):
+		var upper: PackedVector3Array = grid[ring]
+		var lower: PackedVector3Array = grid[ring + 1]
+		for index in range(radial):
+			var next_index := (index + 1) % radial
+			tool.add_vertex(upper[index])
+			tool.add_vertex(lower[index])
+			tool.add_vertex(upper[next_index])
+			tool.add_vertex(upper[next_index])
+			tool.add_vertex(lower[index])
+			tool.add_vertex(lower[next_index])
+
+	# Close the hem underneath, so no camera ever looks up inside it.
+	var hem_row: PackedVector3Array = grid[rings]
+	var centre := Vector3(0.0, height * 0.02, 0.0)
+	for index in range(radial):
+		var next_index := (index + 1) % radial
+		tool.add_vertex(hem_row[next_index])
+		tool.add_vertex(hem_row[index])
+		tool.add_vertex(centre)
+
+	tool.generate_normals()
+	return tool.commit()
+
+
+## The sparks that mark it out as rare: a slow golden drizzle rising around
+## the ghost, fading as it goes.
+func _build_sparkles() -> GPUParticles3D:
+	var spark_mesh := QuadMesh.new()
+	# Small enough to read as dust rather than as squares.
+	spark_mesh.size = Vector2(0.045, 0.045)
+	var spark_material := StandardMaterial3D.new()
+	spark_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	spark_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	spark_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	spark_material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	spark_material.vertex_color_use_as_albedo = true
+	spark_material.albedo_color = GameConfig.PHASE_PALE_COLOR
+	spark_mesh.material = spark_material
+
+	var gradient := Gradient.new()
+	gradient.set_color(0, GameConfig.PHASE_PALE_COLOR)
+	gradient.set_color(1, Color(
+		GameConfig.PHASE_COLOR.r, GameConfig.PHASE_COLOR.g, GameConfig.PHASE_COLOR.b, 0.0
+	))
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = gradient
+
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	process.emission_sphere_radius = 0.4
+	process.direction = Vector3(0.0, 1.0, 0.0)
+	process.spread = 32.0
+	process.initial_velocity_min = 0.15
+	process.initial_velocity_max = 0.55
+	process.gravity = Vector3(0.0, 0.12, 0.0)
+	process.scale_min = 0.5
+	process.scale_max = 1.3
+	process.color_ramp = ramp
+
+	var sparkles := GPUParticles3D.new()
+	sparkles.name = "GhostSparkles"
+	sparkles.amount = 40
+	sparkles.lifetime = 1.5
+	sparkles.randomness = 0.7
+	sparkles.process_material = process
+	sparkles.draw_pass_1 = spark_mesh
+	return sparkles
+
+
 func _build_bolt_mesh() -> ArrayMesh:
 	var outline := PackedVector2Array([
 		Vector2(0.16, 1.0), Vector2(-0.52, 0.06), Vector2(-0.12, 0.06),
