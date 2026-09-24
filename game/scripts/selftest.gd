@@ -785,8 +785,11 @@ func _verify_network() -> Array:
 		failures.append("the round ended without a winner")
 	if died_locally and not spectated:
 		failures.append("dying did not put this player into the spectator camera")
-	if rocks_seen < GameConfig.OBSTACLE_COUNT.x:
-		failures.append("the arena arrived with %d rock(s)" % rocks_seen)
+	var floor_count := SnakeMatch.minimum_rocks(peers_seen)
+	if rocks_seen < floor_count:
+		failures.append("the arena arrived with %d rock(s), fewer than %d" % [
+			rocks_seen, floor_count,
+		])
 	return failures
 
 
@@ -827,7 +830,7 @@ func _verify_solo(stats: Dictionary) -> Array:
 	elif absf(multiplier_after_slow - 1.0) > 0.05:
 		failures.append("speed stayed at x%.2f after the slow down" % multiplier_after_slow)
 
-	if rocks_seen < GameConfig.OBSTACLE_COUNT.x:
+	if rocks_seen < SnakeMatch.minimum_rocks(1):
 		failures.append("only %d rock(s) on the arena" % rocks_seen)
 	elif rock_largest - rock_smallest < 0.5:
 		failures.append("every rock was the same size (r%.1f-%.1f)" % [

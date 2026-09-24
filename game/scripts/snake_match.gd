@@ -40,6 +40,7 @@ var _rng := RandomNumberGenerator.new()
 var _next_bolt_at := 0.0
 var _next_mystery_at := 0.0
 var _forced_roll: SnakeWorld.Item = SnakeWorld.Item.NONE
+var _gap := GameConfig.OBSTACLE_GAP
 
 
 func _init(arena_width: float, arena_height: float, seed_value: int = 0) -> void:
@@ -120,6 +121,7 @@ func _spawn_pose(index: int, count: int) -> Array:
 func _build_obstacles() -> void:
 	obstacles = []
 	lane_length = GameConfig.OBSTACLE_LANE_LENGTH
+	_gap = GameConfig.OBSTACLE_GAP
 	var wanted := _rng.randi_range(GameConfig.OBSTACLE_COUNT.x, GameConfig.OBSTACLE_COUNT.y)
 	var attempts := 0
 	while obstacles.size() < wanted and attempts < 900:
@@ -146,17 +148,50 @@ func _build_obstacles() -> void:
 		)
 		if not _obstacle_fits(candidate, radius):
 			continue
-		obstacles.append({
-			"position": candidate,
-			"radius": radius,
-			"spin": _rng.randf() * TAU,
-			"sides": _rng.randi_range(5, 7),
-		})
+		_add_obstacle(candidate, radius)
+
+	# The arena promises a handful of rocks; a crowded one must still keep
+	# that promise. The last resort is the smallest rock, the shortest lane
+	# and a tighter squeeze between neighbours - never a snake's spawn.
+	var floor_count := minimum_rocks(snakes.size())
+	if obstacles.size() >= floor_count:
+		return
+	lane_length = GameConfig.OBSTACLE_LANE_MIN
+	_gap = GameConfig.OBSTACLE_GAP_TIGHT
+	var radius: float = GameConfig.OBSTACLE_RADIUS.x
+	var margin := radius + GameConfig.OBSTACLE_WALL_GAP
+	for _attempt in range(400):
+		if obstacles.size() >= floor_count:
+			break
+		var candidate := Vector2(
+			_rng.randf_range(margin, width - margin),
+			_rng.randf_range(margin, height - margin)
+		)
+		if _obstacle_fits(candidate, radius):
+			_add_obstacle(candidate, radius)
+	_gap = GameConfig.OBSTACLE_GAP
+
+
+## The fewest rocks an arena will ever be laid out with. Every player's
+## spawn and the lane ahead of it are held clear, so a crowded arena simply
+## has less floor left for rocks - the promise bends with the crowd rather
+## than being broken.
+static func minimum_rocks(players: int) -> int:
+	return maxi(3, GameConfig.OBSTACLE_COUNT.x - maxi(0, players - 3))
+
+
+func _add_obstacle(position: Vector2, radius: float) -> void:
+	obstacles.append({
+		"position": position,
+		"radius": radius,
+		"spin": _rng.randf() * TAU,
+		"sides": _rng.randi_range(5, 7),
+	})
 
 
 func _obstacle_fits(candidate: Vector2, radius: float) -> bool:
 	for other: Dictionary in obstacles:
-		if candidate.distance_to(other["position"]) < radius + other["radius"] + GameConfig.OBSTACLE_GAP:
+		if candidate.distance_to(other["position"]) < radius + other["radius"] + _gap:
 			return false
 	for id: int in spawns:
 		var pose: Array = spawns[id]

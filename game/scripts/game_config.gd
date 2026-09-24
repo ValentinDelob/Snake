@@ -72,6 +72,7 @@ const OBSTACLE_COUNT := Vector2i(5, 8)
 const OBSTACLE_RADIUS := Vector2(0.85, 2.6)
 const OBSTACLE_GAP := 3.0            # room left between two rocks
 const OBSTACLE_WALL_GAP := 2.2       # corridor left between a rock and a wall
+const OBSTACLE_GAP_TIGHT := 1.8      # the closest two rocks may sit when room runs out
 const OBSTACLE_SPAWN_CLEAR := 5.0    # room left around a spawn point
 const OBSTACLE_LANE_LENGTH := 14.0   # how far ahead the spawn lane is kept clear
 const OBSTACLE_LANE_MIN := 6.0       # never less than this, however crowded
