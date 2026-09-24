@@ -52,8 +52,47 @@ const SLOW_RAMP_DOWN := 0.5    # seconds to lose the speed
 const SLOW_RAMP_UP := 1.0      # seconds to get it back
 
 ## Body mesh: a tube swept along the path the head travelled.
-const TUBE_RING_SPACING := 0.22   # distance between two rings of the tube
-const TUBE_RADIAL_SEGMENTS := 10  # vertices around the body
+##
+## The tube is the only thing in the game whose cost grows while you play,
+## so how finely it is cut is a setting rather than a constant. Each mode
+## says how many vertices go around the body, how far apart the rings sit
+## behind the head, how far apart they are allowed to drift towards the
+## tail (which is straighter and thinner, so it needs fewer), over what
+## length that drift happens, and how many rings round off the nose.
+enum Quality { SIMPLE, SMOOTH, FINE }
+
+const QUALITY_MODES := [
+	{
+		"name": "simple", "label": "SIMPLE", "note": "fewest faces, fastest",
+		"radial": 5, "ring": 0.55, "ring_tail": 1.1, "detail": 4.0, "nose": 2,
+	},
+	{
+		"name": "smooth", "label": "SMOOTH", "note": "the default balance",
+		"radial": 7, "ring": 0.34, "ring_tail": 0.7, "detail": 6.0, "nose": 3,
+	},
+	{
+		"name": "fine", "label": "FINE", "note": "roundest body, most faces",
+		"radial": 10, "ring": 0.22, "ring_tail": 0.34, "detail": 8.0, "nose": 4,
+	},
+]
+
+## Which mode is in force. Set once from the saved profile and whenever the
+## player picks another one in the menu.
+static var quality: Quality = Quality.SMOOTH
+
+
+static func quality_mode() -> Dictionary:
+	return QUALITY_MODES[clampi(int(quality), 0, QUALITY_MODES.size() - 1)]
+
+
+## Look a mode up by the name kept in the save file.
+static func quality_from_name(name: String) -> Quality:
+	for index in range(QUALITY_MODES.size()):
+		if QUALITY_MODES[index]["name"] == name:
+			return index as Quality
+	return Quality.SMOOTH
+
+
 const HEAD_BULGE := 1.3           # how much thicker the head is
 const HEAD_BULGE_LENGTH := 0.9    # over how much body the bulge fades out
 const TAIL_TAPER := 0.45          # thickness left just before the tail tip

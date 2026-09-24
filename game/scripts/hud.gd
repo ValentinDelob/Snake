@@ -6,6 +6,7 @@ extends CanvasLayer
 signal solo_requested()
 signal host_requested()
 signal join_requested(address: String)
+signal quality_chosen(mode: int)
 signal quit_requested()
 
 ## The interface: a slim top bar while playing, and a centred card for the
@@ -23,7 +24,7 @@ const BUTTON_COLOR := Color(0.1, 0.13, 0.19, 0.95)
 
 ## The menu is three pages deep: the main one, the multiplayer choice, and
 ## the address box behind "join".
-enum MenuPage { MAIN, MULTIPLAYER, JOIN }
+enum MenuPage { MAIN, MULTIPLAYER, JOIN, GRAPHICS }
 
 var _top_bar: Control
 var _score_value: Label
@@ -353,7 +354,7 @@ func menu_back() -> bool:
 		MenuPage.JOIN:
 			_show_menu_page(MenuPage.MULTIPLAYER)
 			return true
-		MenuPage.MULTIPLAYER:
+		MenuPage.MULTIPLAYER, MenuPage.GRAPHICS:
 			_show_menu_page(MenuPage.MAIN)
 			return true
 		_:
@@ -384,6 +385,10 @@ func _show_menu_page(page: MenuPage) -> void:
 			_set_buttons([
 				{"text": "PLAY SOLO", "primary": true, "action": solo_requested},
 				{"text": "MULTIPLAYER", "action": func(): _show_menu_page(MenuPage.MULTIPLAYER)},
+				{
+					"text": "GRAPHICS  %s" % GameConfig.quality_mode()["label"],
+					"action": func(): _show_menu_page(MenuPage.GRAPHICS),
+				},
 				{"text": "QUIT", "action": quit_requested},
 			])
 			_set_hints([
@@ -400,6 +405,26 @@ func _show_menu_page(page: MenuPage) -> void:
 				{"text": "JOIN A GAME", "action": func(): _show_menu_page(MenuPage.JOIN)},
 				{"text": "BACK", "action": func(): _show_menu_page(MenuPage.MAIN)},
 			])
+			_set_hints([
+				[["ESC"], "back"],
+			])
+		MenuPage.GRAPHICS:
+			_subtitle.text = "how finely the snake's body is cut"
+			_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
+			_set_chips([])
+			var entries: Array = []
+			for index in range(GameConfig.QUALITY_MODES.size()):
+				var mode: Dictionary = GameConfig.QUALITY_MODES[index]
+				var chosen: bool = index == int(GameConfig.quality)
+				entries.append({
+					"text": "%s%s  -  %s" % [
+						"> " if chosen else "", mode["label"], mode["note"],
+					],
+					"primary": chosen,
+					"action": func(): quality_chosen.emit(index),
+				})
+			entries.append({"text": "BACK", "action": func(): _show_menu_page(MenuPage.MAIN)})
+			_set_buttons(entries)
 			_set_hints([
 				[["ESC"], "back"],
 			])
@@ -553,6 +578,14 @@ func _build_address_field() -> LineEdit:
 			_show_menu_page(MenuPage.MULTIPLAYER)
 	)
 	return _address_field
+
+
+## Redraw the menu where it stands, so a mode picked on the graphics page
+## shows as the chosen one straight away.
+func refresh_menu_page() -> void:
+	if _menu_items.is_empty():
+		return
+	_show_menu_page(_menu_page)
 
 
 ## Pre-fill the address box with whatever was used last. The menu remembers

@@ -46,7 +46,8 @@ var death_position := Vector2.ZERO
 var _path: Array[Vector2] = []
 ## body_points() is asked for several times per step (collision, rendering),
 ## and rebuilding it walks the whole path, so the result is cached.
-var _points_cache: Array[Vector2] = []
+var _points_cache := PackedVector2Array()
+var _even_distances := PackedFloat32Array()
 var _points_dirty := true
 
 
@@ -92,44 +93,63 @@ func segment_count() -> int:
 	return maxi(1, int(body_length / GameConfig.SEGMENT_SPACING))
 
 
-## Positions used by collisions, closest to the head first.
-func body_points() -> Array[Vector2]:
+## Positions used by collisions, closest to the head first. The buffer is
+## kept between calls: this is asked for on every simulation step, and a
+## fresh array each time was pure allocator traffic.
+func body_points() -> PackedVector2Array:
 	if not _points_dirty:
 		return _points_cache
-	_points_cache = sample_path(GameConfig.SEGMENT_SPACING, segment_count())
+	var count := segment_count()
+	if _even_distances.size() != count:
+		_even_distances.resize(count)
+		for index in range(count):
+			_even_distances[index] = GameConfig.SEGMENT_SPACING * (index + 1)
+	sample_path_at(_even_distances, _points_cache)
 	_points_dirty = false
 	return _points_cache
 
 
-## Walk the path travelled by the head and return evenly spaced points.
-func sample_path(spacing: float, count: int) -> Array[Vector2]:
-	var points: Array[Vector2] = []
-	var wanted := spacing
+## Pick points along the path at the given distances behind the head. The
+## distances must increase, which lets one walk of the path serve them all -
+## and lets the body mesh ask for rings that are not evenly spaced. Results
+## are written into `out`, which is resized in place.
+func sample_path_at(distances: PackedFloat32Array, out: PackedVector2Array) -> void:
+	var count := distances.size()
+	if out.size() != count:
+		out.resize(count)
+	if count == 0:
+		return
+
+	var filled := 0
 	var travelled := 0.0
 	var current := head_position
+	var wanted: float = distances[0]
 
 	for index in range(_path.size()):
 		var next_point: Vector2 = _path[index]
 		var span := current.distance_to(next_point)
-		while span > 0.0 and travelled + span >= wanted and points.size() < count:
-			var ratio := (wanted - travelled) / span
-			points.append(current.lerp(next_point, ratio))
-			wanted += spacing
+		while span > 0.0 and travelled + span >= wanted and filled < count:
+			out[filled] = current.lerp(next_point, (wanted - travelled) / span)
+			filled += 1
+			if filled < count:
+				wanted = distances[filled]
 		travelled += span
 		current = next_point
-		if points.size() >= count:
+		if filled >= count:
 			break
 
 	# While the snake is still growing the path can be shorter than the body:
-	# extend the tail backwards instead of stacking segments on one spot.
+	# extend the tail backwards instead of stacking rings on one spot.
+	if filled >= count:
+		return
 	var tail_direction := -direction()
-	if points.size() >= 2:
-		tail_direction = (points[points.size() - 1] - points[points.size() - 2]).normalized()
-	while points.size() < count:
-		var last: Vector2 = points[points.size() - 1] if not points.is_empty() else head_position
-		points.append(last + tail_direction * spacing)
-
-	return points
+	if filled >= 2:
+		tail_direction = (out[filled - 1] - out[filled - 2]).normalized()
+	var anchor: Vector2 = out[filled - 1] if filled > 0 else head_position
+	var anchor_at: float = distances[filled - 1] if filled > 0 else 0.0
+	while filled < count:
+		out[filled] = anchor + tail_direction * (distances[filled] - anchor_at)
+		filled += 1
 
 
 func is_inside(point: Vector2) -> bool:
@@ -144,9 +164,12 @@ func is_inside(point: Vector2) -> bool:
 func hits_body(point: Vector2, ignore_from_head: float = GameConfig.SELF_COLLISION_SKIP) -> bool:
 	var skip := int(ignore_from_head / GameConfig.SEGMENT_SPACING)
 	var points := body_points()
+	# Squared throughout: this runs over every body point on every step, and
+	# a square root per point is a square root wasted.
 	var radius := GameConfig.SNAKE_RADIUS * 1.6
+	var radius_squared := radius * radius
 	for index in range(skip, points.size()):
-		if point.distance_to(points[index]) < radius:
+		if point.distance_squared_to(points[index]) < radius_squared:
 			return true
 	return false
 
@@ -179,8 +202,9 @@ func advance(delta: float) -> void:
 	var travel := GameConfig.SNAKE_SPEED * speed_multiplier * delta
 	head_position += direction() * travel
 	distance_travelled += travel
-
+	# The samples are measured from the head, so moving invalidates them.
 	_points_dirty = true
+
 	if _path.is_empty() or head_position.distance_to(_path[0]) >= PATH_SAMPLE:
 		_path.push_front(head_position)
 		_trim_path()

@@ -48,6 +48,15 @@ func build(arena_width: float, arena_height: float) -> void:
 	Journal.info("board", "Board built for a %.0fx%.0f arena" % [arena_width, arena_height])
 
 
+## How many triangles a snake's body is made of right now. Used by the
+## self-test to check the graphics modes really differ.
+func face_count(id: int) -> int:
+	if not _snakes.has(id):
+		return 0
+	var mesh: SnakeMesh = _snakes[id]["mesh"]
+	return mesh.face_count()
+
+
 ## Reshape every snake and move the props to match the current match.
 func refresh(game_match: SnakeMatch, local_id: int, elapsed: float, flash: float) -> void:
 	var order: Array = game_match.snakes.keys()

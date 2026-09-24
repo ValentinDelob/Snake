@@ -13,6 +13,7 @@ const DEFAULTS := {
 	"view": "3d",
 	"camera": "follow",
 	"address": "127.0.0.1",
+	"quality": "smooth",
 }
 
 var data: Dictionary = DEFAULTS.duplicate()

@@ -8,8 +8,12 @@ extends MeshInstance3D
 ## the head, tapering at the tail) and the surface carries UVs - length along
 ## the body and angle around it - which is all snake_body.gdshader needs to
 ## paint the gradient, the belly, the scales and the boost lightning.
-
-const NOSE_RINGS := 4
+##
+## How finely it is cut comes from the graphics mode the player chose. The
+## rings are also allowed to spread out towards the tail: that end is
+## straighter, thinner and further from the eye, so it does not need the
+## density the head does. This is the one mesh in the game that is rebuilt
+## every frame and that grows while you play, so nothing here allocates.
 
 const SHADER_PATH := "res://shaders/snake_body.gdshader"
 
@@ -21,9 +25,25 @@ var _normals := PackedVector3Array()
 var _uvs := PackedVector2Array()
 var _indices := PackedInt32Array()
 var _ring_count := 0
-## cos/sin of the ring angles, computed once.
+## cos/sin of the ring angles, rebuilt only when the graphics mode changes.
 var _ring_cos := PackedFloat32Array()
 var _ring_sin := PackedFloat32Array()
+var _radial := 0
+var _nose_rings := 0
+var _quality_built := -1
+
+## Reused between frames.
+var _ring_distances := PackedFloat32Array()
+var _centres := PackedVector2Array()
+var _points := PackedVector3Array()
+var _radii := PackedFloat32Array()
+var _shades := PackedFloat32Array()
+var _planned_length := -1.0
+var _built_length := -1.0
+var _built_steps := -1
+var _sent_flash := -1.0
+var _sent_boost := -1.0
+var _sent_slow := -1.0
 
 
 func _ready() -> void:
@@ -37,19 +57,39 @@ func _ready() -> void:
 	_material.set_shader_parameter("frost_color", GameConfig.FROST_COLOR)
 	_material.set_shader_parameter("frost_pale_color", GameConfig.FROST_PALE_COLOR)
 	material_override = _material
+	_apply_quality()
 
-	var radial := GameConfig.TUBE_RADIAL_SEGMENTS
-	_ring_cos.resize(radial)
-	_ring_sin.resize(radial)
-	for index in range(radial):
-		var angle := TAU * index / radial
+
+## Pick up the graphics mode. Cheap enough to check every rebuild, which
+## means a mode chosen in the menu takes effect on the next frame.
+func _apply_quality() -> void:
+	if _quality_built == int(GameConfig.quality):
+		return
+	_quality_built = int(GameConfig.quality)
+	var mode := GameConfig.quality_mode()
+	_radial = int(mode["radial"])
+	_nose_rings = int(mode["nose"])
+	_ring_cos.resize(_radial)
+	_ring_sin.resize(_radial)
+	for index in range(_radial):
+		var angle := TAU * index / _radial
 		_ring_cos[index] = cos(angle)
 		_ring_sin[index] = sin(angle)
+	# Everything downstream is sized by the ring count, so start again.
+	_planned_length = -1.0
+	_built_steps = -1
+	_ring_count = 0
+	_vertices.resize(0)
 
 
-## Flash the head for a moment after a bite.
+## Flash the head for a moment after a bite. Every one of these crosses to
+## the renderer, so a value that has not moved is not sent again.
 func set_flash(flash: float) -> void:
-	_material.set_shader_parameter("flash", clampf(flash, 0.0, 1.0))
+	var value := clampf(flash, 0.0, 1.0)
+	if is_equal_approx(value, _sent_flash):
+		return
+	_sent_flash = value
+	_material.set_shader_parameter("flash", value)
 
 
 ## Each player has their own colours; the effects stay the same for all.
@@ -61,47 +101,92 @@ func set_palette(head: Color, body: Color, tail: Color) -> void:
 
 ## How strongly the lightning and the frost show, each 0 to 1.
 func set_effects(boost: float, slow: float) -> void:
-	_material.set_shader_parameter("boost", clampf(boost, 0.0, 1.0))
-	_material.set_shader_parameter("slow", clampf(slow, 0.0, 1.0))
+	var boost_value := clampf(boost, 0.0, 1.0)
+	var slow_value := clampf(slow, 0.0, 1.0)
+	if not is_equal_approx(boost_value, _sent_boost):
+		_sent_boost = boost_value
+		_material.set_shader_parameter("boost", boost_value)
+	if not is_equal_approx(slow_value, _sent_slow):
+		_sent_slow = slow_value
+		_material.set_shader_parameter("slow", slow_value)
 
 
+## How many triangles the body is made of right now, for the record.
+func face_count() -> int:
+	return _indices.size() / 3
+
+
+## Nothing about the tube changes unless the snake does, so a frame that
+## finds it where it left it hands the renderer nothing at all.
 func rebuild(world: SnakeWorld, height: float) -> void:
-	var length: float = maxf(world.body_length, GameConfig.TUBE_RING_SPACING * 2.0)
-	var body_rings := maxi(3, int(length / GameConfig.TUBE_RING_SPACING))
-	var centres := world.sample_path(GameConfig.TUBE_RING_SPACING, body_rings)
+	_apply_quality()
+	if world.steps == _built_steps and is_equal_approx(world.body_length, _built_length):
+		return
+	_built_steps = world.steps
+	_built_length = world.body_length
 
-	# Ring centres: the rounded nose first, then the body down to the tail.
-	var points: Array[Vector3] = []
-	var radii := PackedFloat32Array()
-	var shades := PackedFloat32Array()
+	var mode := GameConfig.quality_mode()
+	var length: float = maxf(world.body_length, float(mode["ring"]) * 2.0)
+	_plan_rings(length, mode)
+	world.sample_path_at(_ring_distances, _centres)
+
+	var body_rings := _ring_distances.size()
+	var total := _nose_rings + 1 + body_rings + 1
+	if _points.size() != total:
+		_points.resize(total)
+		_radii.resize(total)
+		_shades.resize(total)
 
 	var head := Vector3(world.head_position.x, height, world.head_position.y)
 	var forward := Vector3(world.direction().x, 0.0, world.direction().y)
 	var head_radius := GameConfig.SNAKE_RADIUS * GameConfig.HEAD_BULGE
 
-	for index in range(NOSE_RINGS + 1):
-		var ratio := float(index) / NOSE_RINGS      # 0 at the tip, 1 at the head
+	# Ring centres: the rounded nose first, then the body down to the tail.
+	for index in range(_nose_rings + 1):
+		var ratio := float(index) / _nose_rings      # 0 at the tip, 1 at the head
 		var ahead := head_radius * (1.0 - ratio)
-		points.append(head + forward * ahead)
-		radii.append(head_radius * sqrt(maxf(0.0, 1.0 - (1.0 - ratio) * (1.0 - ratio))))
-		shades.append(0.0)
+		_points[index] = head + forward * ahead
+		_radii[index] = head_radius * sqrt(maxf(0.0, 1.0 - (1.0 - ratio) * (1.0 - ratio)))
+		_shades[index] = 0.0
 
-	for index in range(centres.size()):
-		var travelled := GameConfig.TUBE_RING_SPACING * (index + 1)
+	for index in range(body_rings):
+		var travelled: float = _ring_distances[index]
 		var along: float = clampf(travelled / length, 0.0, 1.0)
-		points.append(Vector3(centres[index].x, height, centres[index].y))
-		radii.append(_radius_at(travelled, along))
-		shades.append(along)
+		var slot := _nose_rings + 1 + index
+		_points[slot] = Vector3(_centres[index].x, height, _centres[index].y)
+		_radii[slot] = _radius_at(travelled, along)
+		_shades[slot] = along
 
 	# A last ring of zero radius closes the tail into a point.
-	if points.size() >= 2:
-		var last: Vector3 = points[points.size() - 1]
-		var before: Vector3 = points[points.size() - 2]
-		points.append(last + (last - before).normalized() * GameConfig.TUBE_RING_SPACING * 0.6)
-		radii.append(0.0)
-		shades.append(1.0)
+	var last_slot := total - 1
+	var last: Vector3 = _points[last_slot - 1]
+	var before: Vector3 = _points[maxi(last_slot - 2, 0)]
+	var away := last - before
+	if away.length_squared() < 0.000001:
+		away = -forward
+	_points[last_slot] = last + away.normalized() * float(mode["ring"]) * 0.6
+	_radii[last_slot] = 0.0
+	_shades[last_slot] = 1.0
 
-	_build_surface(points, radii, shades)
+	_build_surface(total)
+
+
+## Where to put the rings: tight behind the head, opening out towards the
+## tail. Only recomputed when the body changes length.
+func _plan_rings(length: float, mode: Dictionary) -> void:
+	if is_equal_approx(length, _planned_length):
+		return
+	_planned_length = length
+	_ring_distances.clear()
+	var near: float = mode["ring"]
+	var far: float = mode["ring_tail"]
+	var detail: float = mode["detail"]
+	var travelled := 0.0
+	while travelled < length:
+		travelled += lerpf(near, far, clampf(travelled / detail, 0.0, 1.0))
+		_ring_distances.append(minf(travelled, length))
+	while _ring_distances.size() < 3:
+		_ring_distances.append(length)
 
 
 # --------------------------------------------------------------------------- #
@@ -120,14 +205,10 @@ func _radius_at(travelled: float, along: float) -> float:
 	return maxf(radius, 0.0)
 
 
-func _build_surface(
-	points: Array[Vector3], radii: PackedFloat32Array, shades: PackedFloat32Array
-) -> void:
-	var rings := points.size()
+func _build_surface(rings: int) -> void:
 	if rings < 2:
 		return
-	var radial := GameConfig.TUBE_RADIAL_SEGMENTS
-	var vertex_count := rings * radial
+	var vertex_count := rings * _radial
 
 	if _vertices.size() != vertex_count:
 		_vertices.resize(vertex_count)
@@ -135,25 +216,25 @@ func _build_surface(
 		_uvs.resize(vertex_count)
 	if _ring_count != rings:
 		_ring_count = rings
-		_rebuild_indices(rings, radial)
+		_rebuild_indices(rings, _radial)
 
 	for ring in range(rings):
-		var centre: Vector3 = points[ring]
-		var tangent := _tangent(points, ring)
+		var centre: Vector3 = _points[ring]
+		var tangent := _tangent(rings, ring)
 		var side := tangent.cross(Vector3.UP)
 		if side.length_squared() < 0.0001:
 			side = Vector3.RIGHT
 		side = side.normalized()
 		var up := side.cross(tangent).normalized()
-		var radius: float = radii[ring]
-		var along: float = shades[ring]
+		var radius: float = _radii[ring]
+		var along: float = _shades[ring]
 
-		for index in range(radial):
+		for index in range(_radial):
 			var offset: Vector3 = side * _ring_cos[index] + up * _ring_sin[index]
-			var vertex_index := ring * radial + index
+			var vertex_index := ring * _radial + index
 			_vertices[vertex_index] = centre + offset * radius
 			_normals[vertex_index] = offset
-			_uvs[vertex_index] = Vector2(along, float(index) / float(radial))
+			_uvs[vertex_index] = Vector2(along, float(index) / float(_radial))
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -166,9 +247,9 @@ func _build_surface(
 	_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 
-func _tangent(points: Array[Vector3], ring: int) -> Vector3:
-	var previous: Vector3 = points[maxi(ring - 1, 0)]
-	var following: Vector3 = points[mini(ring + 1, points.size() - 1)]
+func _tangent(rings: int, ring: int) -> Vector3:
+	var previous: Vector3 = _points[maxi(ring - 1, 0)]
+	var following: Vector3 = _points[mini(ring + 1, rings - 1)]
 	var tangent := previous - following      # points from tail towards head
 	if tangent.length_squared() < 0.000001:
 		return Vector3.FORWARD

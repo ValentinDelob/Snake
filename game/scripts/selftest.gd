@@ -74,6 +74,9 @@ var _score_last := -1
 var _length_last := -1.0
 var _floor_stage := 0
 
+## graphics modes: name -> faces the body was made of
+var quality_faces := {}
+
 # rocks
 var rocks_seen := 0
 var rock_smallest := 99.0
@@ -303,7 +306,7 @@ func _on_play(game) -> void:
 
 	match phase:
 		Phase.CAMERAS:
-			_run_cameras(now)
+			_run_cameras(game, now)
 		Phase.TURNS:
 			_run_turns(game, now)
 		Phase.BOOST:
@@ -398,8 +401,9 @@ func _enter_phase(next_phase: Phase, now: float) -> void:
 	Journal.info("selftest", "phase -> %s" % Phase.keys()[next_phase])
 
 
-func _run_cameras(now: float) -> void:
+func _run_cameras(game, now: float) -> void:
 	var since := now - _phase_started
+	_walk_quality_modes(game, since)
 	for mark: float in camera_schedule:
 		if since >= mark and not _done_marks.has(mark):
 			_done_marks[mark] = true
@@ -409,6 +413,19 @@ func _run_cameras(now: float) -> void:
 			return
 	if _done_marks.size() >= camera_schedule.size() and since >= 4.6:
 		_enter_phase(Phase.TURNS, now)
+
+
+## Try every graphics mode on a real body and write down how many faces
+## each one costs. A mode that stopped building anything, or that stopped
+## differing from its neighbours, shows up here.
+func _walk_quality_modes(game, since: float) -> void:
+	var wanted := int(since / 1.2)
+	if wanted < GameConfig.QUALITY_MODES.size() and wanted != int(GameConfig.quality):
+		GameConfig.quality = wanted as GameConfig.Quality
+		Journal.info("selftest", "graphics mode -> %s" % GameConfig.quality_mode()["name"])
+	var faces: int = game.board_view().face_count(Session.local_id())
+	if faces > 0:
+		quality_faces[GameConfig.quality_mode()["name"]] = faces
 
 
 ## Hold LEFT, then RIGHT, and check the heading actually turned each way.
@@ -675,7 +692,7 @@ func _check_body_spacing(snake, now: float) -> void:
 		return
 	_next_spacing_check = now + 1.0
 
-	var points: Array[Vector2] = snake.body_points()
+	var points: PackedVector2Array = snake.body_points()
 	if points.size() < 3:
 		return
 	_spacing_checks += 1
@@ -734,10 +751,11 @@ func summary(game) -> String:
 			peers_seen, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
+		str(quality_faces),
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
@@ -829,6 +847,16 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the slow down never ran to completion")
 	elif absf(multiplier_after_slow - 1.0) > 0.05:
 		failures.append("speed stayed at x%.2f after the slow down" % multiplier_after_slow)
+
+	for mode: Dictionary in GameConfig.QUALITY_MODES:
+		if not quality_faces.has(mode["name"]):
+			failures.append("graphics mode never drew anything: %s" % mode["name"])
+	if quality_faces.size() == GameConfig.QUALITY_MODES.size():
+		var simple: int = quality_faces["simple"]
+		var smooth: int = quality_faces["smooth"]
+		var fine: int = quality_faces["fine"]
+		if not (simple < smooth and smooth < fine):
+			failures.append("graphics modes did not order themselves: %s" % str(quality_faces))
 
 	if rocks_seen < SnakeMatch.minimum_rocks(1):
 		failures.append("only %d rock(s) on the arena" % rocks_seen)

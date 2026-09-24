@@ -5,22 +5,27 @@ extends SceneTree
 ##
 ##     godot --headless --path game --script res://tools/bench_mesh.gd
 ##
-## It prints microseconds per call at several body lengths, which is the
-## only way to compare an optimisation honestly: a short snake hides
-## everything, and the game is at its worst when a round has gone well.
+## It prints microseconds per call at several body lengths and for every
+## graphics mode, which is the only way to compare an optimisation honestly:
+## a short snake hides everything, and the game is at its worst when a round
+## has gone well.
 
 const LENGTHS := [2.6, 8.0, 16.0, 30.0, 50.0]
 const REPEATS := 400
 
 
 func _initialize() -> void:
-	print("length | rebuild us | body_points us | rings")
-	for length: float in LENGTHS:
-		_bench(length)
+	for mode in range(GameConfig.QUALITY_MODES.size()):
+		GameConfig.quality = mode as GameConfig.Quality
+		var label: String = GameConfig.quality_mode()["label"]
+		print("")
+		print("%s | length | rebuild us | body_points us | faces" % label)
+		for length: float in LENGTHS:
+			_bench(length, label)
 	quit()
 
 
-func _bench(length: float) -> void:
+func _bench(length: float, label: String) -> void:
 	var world := SnakeWorld.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT)
 	world.reset(Vector2(15.0, 10.0), 0.0)
 	world.target_body_length = length
@@ -55,6 +60,7 @@ func _bench(length: float) -> void:
 		world.body_points()
 	var points_us := float(Time.get_ticks_usec() - start) / REPEATS
 
-	var rings := maxi(3, int(length / GameConfig.TUBE_RING_SPACING))
-	print("%6.1f | %10.1f | %14.1f | %5d" % [length, rebuild_us, points_us, rings])
+	print("%6s | %6.1f | %10.1f | %14.1f | %5d" % [
+		label, length, rebuild_us, points_us, mesh.face_count(),
+	])
 	mesh.free()

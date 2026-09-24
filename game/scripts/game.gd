@@ -97,10 +97,15 @@ func _ready() -> void:
 	_camera.set_arena(game_match.width, game_match.height)
 	_camera.set_mode_by_name(str(PlayerProfile.get_preference("camera")))
 	_camera.set_flat(str(PlayerProfile.get_preference("view")) == "flat")
+	GameConfig.quality = GameConfig.quality_from_name(
+		str(PlayerProfile.get_preference("quality"))
+	)
+	Journal.info("game", "Graphics mode: %s" % GameConfig.quality_mode()["name"])
 
 	_hud.solo_requested.connect(_start_solo)
 	_hud.host_requested.connect(_start_hosting)
 	_hud.join_requested.connect(_join_session)
+	_hud.quality_chosen.connect(_choose_quality)
 	_hud.quit_requested.connect(func(): request_quit("menu-quit"))
 
 	Session.peer_joined.connect(_on_peer_joined)
@@ -149,10 +154,14 @@ func _parse_arguments() -> void:
 				_start_score = int(value)
 			"--profile":
 				_profiler = FrameProfiler.new()
-				# Vsync pins every frame to 16.7 ms and hides the very thing
-				# being measured, so a profiling run is left uncapped.
+				# Vsync pins every frame to 16.7 ms and hides what each part
+				# of the frame costs, so a profiling run is left uncapped.
 				DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 				Engine.max_fps = 0
+			"--profile-capped":
+				# The other half of the question: with vsync where a player
+				# has it, how many frames still miss their slot?
+				_profiler = FrameProfiler.new()
 	if _max_steps <= 0:
 		_max_steps = int(GameConfig.SIM_HZ * 60.0)  # one minute of simulation
 	if _driver != null:
@@ -617,6 +626,14 @@ func _set_state(next_state: State) -> void:
 		return
 	Journal.info("game", "State: %s -> %s" % [STATE_NAMES[state], STATE_NAMES[next_state]])
 	state = next_state
+
+
+## The player picked a graphics mode: remember it and let the menu redraw.
+func _choose_quality(mode: int) -> void:
+	GameConfig.quality = mode as GameConfig.Quality
+	PlayerProfile.set_preference("quality", GameConfig.quality_mode()["name"])
+	Journal.info("game", "Graphics mode: %s" % GameConfig.quality_mode()["name"])
+	_hud.refresh_menu_page()
 
 
 ## What the menu last said, so a test can read the reason a join failed.
