@@ -37,6 +37,20 @@ var _rocks: Node3D
 var _rock_material: StandardMaterial3D
 var _eye_mesh: SphereMesh
 var _eye_material: StandardMaterial3D
+var _pupil_mesh: SphereMesh
+var _pupil_material: StandardMaterial3D
+var _halo_mesh: MultiMesh
+var _crystal_material: StandardMaterial3D
+var _fx: FxLayer
+## What each snake looked like last frame, so a death, a comeback or a gem
+## swallowed can be noticed here - on a client too, which only ever sees
+## snapshots and never hears about the events themselves.
+var _last_alive: Dictionary = {}     # id -> bool
+var _last_score: Dictionary = {}     # id -> float
+
+const GEM_SHADER := "res://shaders/mote_gem.gdshader"
+const HALO_SHADER := "res://shaders/soft_halo.gdshader"
+const WATER_SHADER := "res://shaders/lagoon_water.gdshader"
 
 
 func build(arena_width: float, arena_height: float) -> void:
@@ -50,6 +64,12 @@ func build(arena_width: float, arena_height: float) -> void:
 	_rocks = Node3D.new()
 	_rocks.name = "Rocks"
 	add_child(_rocks)
+	_fx = FxLayer.new()
+	_fx.name = "Fx"
+	add_child(_fx)
+	_fx.set_arena(arena_width, arena_height)
+	_last_alive.clear()
+	_last_score.clear()
 	Journal.info("board", "Board built for a %.0fx%.0f arena" % [arena_width, arena_height])
 
 
@@ -74,6 +94,9 @@ func refresh(game_match: SnakeMatch, local_id: int, elapsed: float, flash: float
 		mesh.visible = snake.alive
 		for eye: MeshInstance3D in visual["eyes"]:
 			eye.visible = snake.alive
+		_notice_changes(id, snake, visual["palette"])
+		var head := Vector3(snake.head_position.x, BODY_HEIGHT, snake.head_position.y)
+		_fx.trail(id, head, visual["palette"][0], snake.alive and snake.boost_intensity() > 0.3)
 		if not snake.alive:
 			continue
 		mesh.rebuild(snake, BODY_HEIGHT)
@@ -105,15 +128,22 @@ func _visual_for(id: int, index: int, is_local: bool) -> Dictionary:
 	add_child(mesh)
 	mesh.set_palette(palette[0], palette[1], palette[2])
 
+	# Big white eyes with a dark pupil looking where the snake goes: a
+	# cartoon face reads from far away and makes every snake a character.
 	var eyes: Array[MeshInstance3D] = []
 	for _index in range(2):
 		var eye := MeshInstance3D.new()
 		eye.mesh = _eye_mesh
 		eye.material_override = _eye_material
+		var pupil := MeshInstance3D.new()
+		pupil.mesh = _pupil_mesh
+		pupil.material_override = _pupil_material
+		pupil.position = Vector3(0.0, 0.0, -0.075)
+		eye.add_child(pupil)
 		add_child(eye)
 		eyes.append(eye)
 
-	_snakes[id] = {"mesh": mesh, "eyes": eyes}
+	_snakes[id] = {"mesh": mesh, "eyes": eyes, "palette": palette}
 	return _snakes[id]
 
 
@@ -123,6 +153,41 @@ func _drop_visual(id: int) -> void:
 	for eye: MeshInstance3D in visual["eyes"]:
 		eye.queue_free()
 	_snakes.erase(id)
+	_fx.drop_trail(id)
+	_last_alive.erase(id)
+	_last_score.erase(id)
+
+
+## The head colour a snake is drawn in, for effects that belong to it.
+func snake_color(id: int) -> Color:
+	if _snakes.has(id):
+		return _snakes[id]["palette"][0]
+	return GameConfig.SPARK_COLOR
+
+
+func fx() -> FxLayer:
+	return _fx
+
+
+## Throw the effect that goes with whatever just happened to this snake.
+func _notice_changes(id: int, snake: SnakeWorld, palette: Array) -> void:
+	var was_alive: bool = _last_alive.get(id, snake.alive)
+	var last_score: float = _last_score.get(id, snake.score)
+	_last_alive[id] = snake.alive
+	_last_score[id] = snake.score
+	if was_alive and not snake.alive:
+		# Bursting: everything it swallowed is thrown back on the floor.
+		_fx.big_burst(snake.death_position, palette[1])
+		_fx.shockwave(snake.death_position, palette[0], 7.0)
+	elif snake.alive and not was_alive:
+		_fx.big_burst(snake.head_position, palette[0])
+		_fx.shockwave(snake.head_position, GameConfig.SPARK_COLOR, 3.5)
+	elif snake.alive:
+		var gained := snake.score - last_score
+		# One gem at a time: a crate card or a snapshot catching up shows
+		# as the colour of what it is worth, the same as a gem would.
+		if gained > 0.05:
+			_fx.eat_burst(snake.head_position, GameConfig.food_glow(minf(gained, GameConfig.FOOD_VALUE.y)))
 
 
 func _place_eyes(eyes: Array, snake: SnakeWorld) -> void:
@@ -138,6 +203,11 @@ func _place_eyes(eyes: Array, snake: SnakeWorld) -> void:
 			forward * 0.45 + side * (0.78 * sign_value) + Vector3.UP * 0.58
 		).normalized()
 		eyes[index].position = center + outwards * (bulge * 0.95)
+		# The pupil rides on the front of the eye, looking a little outwards
+		# as well as ahead, which is what makes the face read as cute.
+		eyes[index].basis = Basis.looking_at(
+			(forward * 1.4 + outwards * 0.6).normalized(), Vector3.UP
+		)
 
 
 # --------------------------------------------------------------------------- #
@@ -238,17 +308,27 @@ func _place_field(
 ) -> void:
 	if _field_mesh.instance_count != field.size():
 		_field_mesh.instance_count = field.size()
-	var breath := 0.9 + 0.1 * sin(elapsed * 3.0)
+		_halo_mesh.instance_count = field.size()
+	var breath := 0.92 + 0.08 * sin(elapsed * 3.0)
 	for index in range(field.size()):
 		var mote: Vector2 = field[index]
 		var value: float = values[index] if index < values.size() else GameConfig.FOOD_VALUE.x
 		var radius: float = GameConfig.food_radius(value) * breath
-		var lift := 0.3 + radius + 0.06 * sin(elapsed * 4.0 + float(index))
+		var lift := 0.3 + radius + 0.08 * sin(elapsed * 3.2 + float(index))
+		var glow := GameConfig.food_glow(value)
+		# Upright like everything on the floor, only spinning - each gem at
+		# its own phase so the field never turns in lockstep.
+		var spin := Basis(Vector3.UP, elapsed * 1.6 + float(index) * 0.7)
 		_field_mesh.set_instance_transform(index, Transform3D(
-			Basis.IDENTITY.scaled(Vector3.ONE * radius),
+			spin.scaled(Vector3(radius, radius * 1.35, radius)),
 			Vector3(mote.x, lift, mote.y)
 		))
-		_field_mesh.set_instance_color(index, GameConfig.food_glow(value))
+		_field_mesh.set_instance_color(index, glow)
+		var pool := radius * 2.6
+		_halo_mesh.set_instance_transform(index, Transform3D(
+			Basis.IDENTITY.scaled(Vector3(pool, 1.0, pool)), Vector3(mote.x, 0.03, mote.y)
+		))
+		_halo_mesh.set_instance_color(index, Color(glow.r, glow.g, glow.b, 0.35 + 0.65 * glow.a))
 
 
 ## Small, quick ring where something was collected.
@@ -295,6 +375,8 @@ func _build_floor(arena_width: float, arena_height: float) -> void:
 	_floor_material.shader = load(FLOOR_SHADER)
 	_floor_material.set_shader_parameter("base_color", GameConfig.FLOOR_COLOR)
 	_floor_material.set_shader_parameter("line_color", GameConfig.GRID_COLOR)
+	_floor_material.set_shader_parameter("caustic_color", GameConfig.CAUSTIC_COLOR)
+	_floor_material.set_shader_parameter("edge_color", GameConfig.FLOOR_EDGE_COLOR)
 	_floor_material.set_shader_parameter("glow_color", GameConfig.BOOST_COLOR)
 	_floor_material.set_shader_parameter("arena_size", Vector2(arena_width, arena_height))
 
@@ -304,6 +386,23 @@ func _build_floor(arena_width: float, arena_height: float) -> void:
 	instance.material_override = _floor_material
 	instance.position = Vector3(arena_width * 0.5, 0.0, arena_height * 0.5)
 	add_child(instance)
+
+	# The lagoon the island sits in. A single plane, a little below the
+	# sand, wide enough that no camera ever sees its edge.
+	var sea := PlaneMesh.new()
+	sea.size = Vector2(arena_width * 5.0 + 200.0, arena_height * 5.0 + 200.0)
+	var water := ShaderMaterial.new()
+	water.shader = load(WATER_SHADER)
+	water.set_shader_parameter("arena_size", Vector2(arena_width, arena_height))
+	water.set_shader_parameter("shallow_color", GameConfig.WATER_SHALLOW_COLOR)
+	water.set_shader_parameter("deep_color", GameConfig.WATER_DEEP_COLOR)
+	var lagoon := MeshInstance3D.new()
+	lagoon.name = "Lagoon"
+	lagoon.mesh = sea
+	lagoon.material_override = water
+	lagoon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lagoon.position = Vector3(arena_width * 0.5, -0.35, arena_height * 0.5)
+	add_child(lagoon)
 
 
 ## Raise the round's rocks. They only change between rounds, so they are
@@ -315,10 +414,21 @@ func set_obstacles(obstacles: Array) -> void:
 		child.queue_free()
 
 	if _rock_material == null:
+		# Pastel stone, glossy enough to take the sky on its facets, with a
+		# lilac rim so a rock still stands out against the bright sand.
 		_rock_material = StandardMaterial3D.new()
 		_rock_material.albedo_color = GameConfig.OBSTACLE_COLOR
-		_rock_material.roughness = 0.9
-		_rock_material.metallic = 0.05
+		_rock_material.roughness = 0.45
+		_rock_material.metallic = 0.1
+		_rock_material.rim_enabled = true
+		_rock_material.rim = 0.6
+		_rock_material.rim_tint = 0.4
+		_crystal_material = StandardMaterial3D.new()
+		_crystal_material.albedo_color = GameConfig.OBSTACLE_TOP_COLOR
+		_crystal_material.emission_enabled = true
+		_crystal_material.emission = GameConfig.OBSTACLE_TOP_COLOR
+		_crystal_material.emission_energy_multiplier = 0.9
+		_crystal_material.roughness = 0.1
 
 	for index in range(obstacles.size()):
 		var rock: Dictionary = obstacles[index]
@@ -341,13 +451,38 @@ func set_obstacles(obstacles: Array) -> void:
 		)
 		instance.rotation.y = rock["spin"]
 		_rocks.add_child(instance)
+
+		# A glowing crystal grows out of the bigger stones: a four-sided
+		# point, a handful of triangles, and the arena gets its sparkle.
+		if radius > 1.4:
+			var crystal := CylinderMesh.new()
+			crystal.bottom_radius = radius * 0.3
+			crystal.top_radius = 0.0
+			crystal.height = radius * 1.1
+			crystal.radial_segments = 4
+			crystal.rings = 1
+			var shard := MeshInstance3D.new()
+			shard.mesh = crystal
+			shard.material_override = _crystal_material
+			shard.position = Vector3(0.0, mesh.height * 0.5 + crystal.height * 0.4, 0.0)
+			instance.add_child(shard)
 	Journal.debug("board", "Raised %d rock(s)" % obstacles.size())
 
 
+## Coral ramparts with a glowing lip along the top: the edge of the world
+## is the one thing you must never lose sight of, so it lights itself.
 func _build_walls(arena_width: float, arena_height: float) -> void:
 	var material := StandardMaterial3D.new()
-	material.albedo_color = GameConfig.WALL_COLOR.darkened(0.2)
-	material.roughness = 0.65
+	material.albedo_color = GameConfig.WALL_COLOR
+	material.roughness = 0.5
+	material.rim_enabled = true
+	material.rim = 0.4
+	var lip_material := StandardMaterial3D.new()
+	lip_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	lip_material.albedo_color = GameConfig.WALL_GLOW_COLOR
+	lip_material.emission_enabled = true
+	lip_material.emission = GameConfig.WALL_GLOW_COLOR
+	lip_material.emission_energy_multiplier = 1.6
 
 	var half := WALL_THICKNESS / 2.0
 	var walls := [
@@ -370,16 +505,37 @@ func _build_walls(arena_width: float, arena_height: float) -> void:
 		instance.position = walls[index]["pos"]
 		add_child(instance)
 
+		var lip_box := BoxMesh.new()
+		lip_box.size = Vector3(box.size.x + 0.02, 0.1, box.size.z + 0.02)
+		var lip := MeshInstance3D.new()
+		lip.mesh = lip_box
+		lip.material_override = lip_material
+		lip.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		lip.position = Vector3(0.0, WALL_HEIGHT * 0.5, 0.0)
+		instance.add_child(lip)
+
 
 func _build_props() -> void:
 	_eye_mesh = SphereMesh.new()
-	_eye_mesh.radius = 0.085
-	_eye_mesh.height = 0.17
+	_eye_mesh.radius = 0.12
+	_eye_mesh.height = 0.24
 	_eye_mesh.radial_segments = 8
 	_eye_mesh.rings = 4
 	_eye_material = StandardMaterial3D.new()
-	_eye_material.albedo_color = GameConfig.EYE_COLOR
-	_eye_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_eye_material.albedo_color = Color(1.0, 1.0, 1.0)
+	_eye_material.emission_enabled = true
+	_eye_material.emission = Color(0.9, 0.92, 1.0)
+	_eye_material.emission_energy_multiplier = 0.25
+	_eye_material.roughness = 0.2
+	_pupil_mesh = SphereMesh.new()
+	_pupil_mesh.radius = 0.065
+	_pupil_mesh.height = 0.13
+	_pupil_mesh.radial_segments = 8
+	_pupil_mesh.rings = 4
+	_pupil_material = StandardMaterial3D.new()
+	_pupil_material.albedo_color = GameConfig.EYE_COLOR
+	_pupil_material.roughness = 0.1
+	_pupil_material.metallic_specular = 1.0
 
 	# A light riding the head: barely there normally, electric while boosted.
 	_head_lamp = OmniLight3D.new()
@@ -389,27 +545,18 @@ func _build_props() -> void:
 	_head_lamp.shadow_enabled = false
 	add_child(_head_lamp)
 
-	# Motes, not crates: a small unlit ball whose colour is brighter than
-	# white for the valuable ones, which is what makes the glow pick them
-	# out across a dark field. The colour rides on the instance, so one
-	# batch draws the whole field.
-	var food_mesh := SphereMesh.new()
-	food_mesh.radius = 1.0
-	food_mesh.height = 2.0
-	food_mesh.radial_segments = 7
-	food_mesh.rings = 4
-	var food_material := StandardMaterial3D.new()
-	food_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	food_material.vertex_color_use_as_albedo = true
-	food_material.albedo_color = Color.WHITE
-	food_material.disable_receive_shadows = true
+	# Motes are gems: an octahedron cut with flat facets, eight triangles
+	# instead of a sphere, spinning so every facet catches the sun in turn.
+	# Their colour rides on the instance, so one batch draws the whole field.
+	var food_material := ShaderMaterial.new()
+	food_material.shader = load(GEM_SHADER)
 
-	# Dozens of pellets lie about at once, so they are drawn as one batch
+	# Dozens of gems lie about at once, so they are drawn as one batch
 	# rather than as one node each.
 	_field_mesh = MultiMesh.new()
 	_field_mesh.transform_format = MultiMesh.TRANSFORM_3D
 	_field_mesh.use_colors = true
-	_field_mesh.mesh = food_mesh
+	_field_mesh.mesh = _build_gem_mesh()
 	_field_mesh.instance_count = 0
 
 	_field = MultiMeshInstance3D.new()
@@ -418,11 +565,30 @@ func _build_props() -> void:
 	_field.material_override = food_material
 	add_child(_field)
 
+	# A pool of coloured light under every gem, so the field glows on the
+	# sand the way jewels in shallow water would.
+	var halo_quad := PlaneMesh.new()
+	halo_quad.size = Vector2(2.0, 2.0)
+	var halo_material := ShaderMaterial.new()
+	halo_material.shader = load(HALO_SHADER)
+	halo_material.set_shader_parameter("strength", 0.3)
+	_halo_mesh = MultiMesh.new()
+	_halo_mesh.transform_format = MultiMesh.TRANSFORM_3D
+	_halo_mesh.use_colors = true
+	_halo_mesh.mesh = halo_quad
+	_halo_mesh.instance_count = 0
+	var halos := MultiMeshInstance3D.new()
+	halos.name = "FieldHalos"
+	halos.multimesh = _halo_mesh
+	halos.material_override = halo_material
+	halos.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(halos)
+
 	_crate_material = StandardMaterial3D.new()
 	_crate_material.albedo_color = GameConfig.MYSTERY_COLOR
 	_crate_material.emission_enabled = true
 	_crate_material.emission = GameConfig.MYSTERY_COLOR
-	_crate_material.emission_energy_multiplier = 0.3
+	_crate_material.emission_energy_multiplier = 1.0
 
 	_crate = MeshInstance3D.new()
 	_crate.name = "MysteryCrate"
@@ -444,7 +610,7 @@ func _build_props() -> void:
 	bolt_material.albedo_color = GameConfig.BOOST_COLOR
 	bolt_material.emission_enabled = true
 	bolt_material.emission = GameConfig.BOOST_COLOR
-	bolt_material.emission_energy_multiplier = 0.8
+	bolt_material.emission_energy_multiplier = 2.2
 
 	_bolt = MeshInstance3D.new()
 	_bolt.name = "Bolt"
@@ -538,6 +704,7 @@ func _build_props() -> void:
 	_flash_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_flash_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_flash_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	_flash_material.disable_fog = true
 
 	_flash_ring = MeshInstance3D.new()
 	_flash_ring.name = "PickupFlash"
@@ -614,6 +781,7 @@ func _build_sparkles() -> GPUParticles3D:
 	spark_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	spark_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	spark_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	spark_material.disable_fog = true
 	spark_material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	spark_material.vertex_color_use_as_albedo = true
 	spark_material.albedo_color = GameConfig.PHASE_PALE_COLOR
@@ -734,3 +902,28 @@ func _extrude(outlines: Array, depth: float) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
+
+
+## A gem: two four-sided pyramids back to back, with a flat normal per
+## facet so each one flashes on its own rather than shading like a ball.
+func _build_gem_mesh() -> ArrayMesh:
+	var top := Vector3(0.0, 1.0, 0.0)
+	var bottom := Vector3(0.0, -1.0, 0.0)
+	var ring: Array[Vector3] = [
+		Vector3(1.0, 0.0, 0.0), Vector3(0.0, 0.0, 1.0),
+		Vector3(-1.0, 0.0, 0.0), Vector3(0.0, 0.0, -1.0),
+	]
+	var tool := SurfaceTool.new()
+	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for index in range(ring.size()):
+		var a: Vector3 = ring[index]
+		var b: Vector3 = ring[(index + 1) % ring.size()]
+		for triangle: Array in [[top, b, a], [bottom, a, b]]:
+			var normal: Vector3 = (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0]).normalized()
+			if normal.dot(triangle[0] + triangle[1] + triangle[2]) < 0.0:
+				normal = -normal
+				triangle = [triangle[0], triangle[2], triangle[1]]
+			for corner: Vector3 in triangle:
+				tool.set_normal(normal)
+				tool.add_vertex(corner)
+	return tool.commit()

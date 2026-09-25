@@ -144,6 +144,16 @@ var _rival_score := 0.0
 var _rival_since := 0.0
 var _menu_step := 0
 var _menu_step_at := 0
+
+## the look: a sky over the arena, effects thrown, a streak, a shake, and
+## the effects setting really switching the pollen off and on
+var sky_seen := false
+var bursts_seen := 0
+var best_streak := 0
+var streak_shown := false
+var peak_trauma := 0.0
+var effects_states := {}
+var effects_follow := true
 ## debug readout: the frame rate it showed, and whether it went away again
 var debug_fps_shown := 0
 var debug_hidden := false
@@ -657,6 +667,19 @@ func _check_display_settings(game) -> void:
 	Journal.info("selftest", "display settings walked: limits %s, vsync %s" % [
 		str(fps_limits_seen), str(vsync_states_seen.keys()),
 	])
+	# The effects setting, walked both ways and back to where it was.
+	var fx: FxLayer = game.board_view().fx()
+	for _index in range(2):
+		game._toggle_effects()
+		var full := bool(PlayerProfile.get_preference("effects"))
+		effects_states[full] = true
+		if fx._pollen == null or fx._pollen.visible != full or GameConfig.effects_full != full:
+			effects_follow = false
+	var environment: Environment = game.get_node("WorldEnvironment").environment
+	sky_seen = environment != null and environment.background_mode == Environment.BG_SKY
+	Journal.info("selftest", "effects walked %s, pollen followed: %s, sky: %s" % [
+		str(effects_states.keys()), effects_follow, sky_seen,
+	])
 
 
 ## Hold LEFT, then RIGHT, and check the heading actually turned each way.
@@ -1053,6 +1076,7 @@ func _watch_world(game, now: float) -> void:
 			])
 		_growth_observed = true
 	_check_body_spacing(snake, now)
+	_watch_look(game)
 
 	# The promise behind the whole feature: the body a snake carries is
 	# never anything other than what its score bought.
@@ -1253,7 +1277,7 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) rivals(%d/%d, offered=%d, moved=%d, ate=%d, named=%s, boost=%s, spit=%.0f%%, result=%s) arena=%.0fx%.0f games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) rivals(%d/%d, offered=%d, moved=%d, ate=%d, named=%s, boost=%s, spit=%.0f%%, result=%s) look(sky=%s, effects=%d/%s, bursts=%d, streak=%d/%s, shake=%.2f) arena=%.0fx%.0f games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
@@ -1268,7 +1292,8 @@ func summary(game) -> String:
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
 		rivals_seen, rivals_expected, rival_counts_offered.size(), rivals_moved.size(),
 		rivals_grew.size(), rivals_named, rival_boost_rule, rival_spit_share * 100.0,
-		rival_result_title, arena_seen.x, arena_seen.y,
+		rival_result_title, sky_seen, effects_states.size(), effects_follow, bursts_seen,
+		best_streak, streak_shown, peak_trauma, arena_seen.x, arena_seen.y,
 		stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 	]
 
@@ -1395,6 +1420,7 @@ func _verify_solo(stats: Dictionary) -> Array:
 			failures.append("graphics modes did not order themselves: %s" % str(quality_faces))
 
 	failures.append_array(_verify_rivals())
+	failures.append_array(_verify_look())
 	var field := 1 + maxi(0, rivals_expected)
 	if arena_seen.distance_to(GameConfig.arena_for(field)) > 0.1:
 		failures.append("solo arena was %.0fx%.0f, expected %.0fx%.0f for %d snakes" % [
@@ -1484,6 +1510,39 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the bot never scored a point")
 	elif not _growth_observed:
 		failures.append("the body jumped to its new length instead of growing into it")
+	return failures
+
+
+## Effects have no rules to check, only that they happen: bursts go off,
+## streaks get called out and a death shakes the camera.
+func _watch_look(game) -> void:
+	bursts_seen = game.board_view().fx().bursts_played()
+	if game.streak() > best_streak:
+		best_streak = game.streak()
+	if not streak_shown and game.hud().streak_readout() != "":
+		streak_shown = true
+		Journal.info("selftest", "streak called out: %s" % game.hud().streak_readout())
+	peak_trauma = maxf(peak_trauma, game.camera_rig().trauma())
+
+
+func _verify_look() -> Array:
+	var failures: Array = []
+	if not sky_seen:
+		failures.append("the arena was not under a sky")
+	if effects_states.size() < 2:
+		failures.append("the effects setting was never seen both ways")
+	elif not effects_follow:
+		failures.append("the pollen did not follow the effects setting")
+	if bursts_seen < 10:
+		failures.append("only %d effect burst(s) went off in a whole round" % bursts_seen)
+	if best_streak < GameConfig.STREAK_SHOWN_FROM:
+		failures.append("never swallowed %d gems in a row (best %d)" % [
+			GameConfig.STREAK_SHOWN_FROM, best_streak,
+		])
+	elif not streak_shown:
+		failures.append("a streak of %d was never called out" % best_streak)
+	if peak_trauma < GameConfig.SHAKE_DEATH * 0.8:
+		failures.append("dying only shook the camera to %.2f" % peak_trauma)
 	return failures
 
 

@@ -19,6 +19,7 @@ const DEFAULTS := {
 	"fps_limit": 0,
 	"debug": false,
 	"rivals": GameConfig.RIVALS_DEFAULT,
+	"effects": true,
 }
 
 var data: Dictionary = DEFAULTS.duplicate()

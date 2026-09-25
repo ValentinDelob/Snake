@@ -175,6 +175,60 @@ partagent le terrain.
 - Le terrain, les rochers et la taille de l'arène sont envoyés au début de la
   manche, pour que tout le monde joue sur le même plateau.
 
+## L'apparence : un lagon solaire
+
+Le jeu se joue en plein après-midi, pas dans une pièce sombre.
+
+- **Le décor.** Un ciel azur qui vire à la pêche à l'horizon, un soleil bas
+  qui étire de longues ombres douces, une brume chaude très légère au loin.
+  L'arène est une **île de sable** posée dans un **lagon turquoise** : l'eau
+  est claire près du bord et plus profonde au large, entourée d'un liseré
+  d'écume qui respire, et le soleil y fait scintiller des reflets.
+- **Le sol.** Un dallage de sable chaud, avec des reflets de lumière qui
+  ondulent en permanence, comme au fond d'une eau peu profonde. Les bords
+  rosissent vers les remparts.
+- **Les remparts** sont corail, surmontés d'un liseré lumineux : le bord du
+  monde se voit toujours.
+- **Les rochers** sont des pierres pastel lilas ; les plus gros portent un
+  cristal lumineux.
+- **La matière** est faite de **gemmes** taillées à facettes, qui tournent
+  sur elles-mêmes et scintillent. Leur couleur dit leur valeur :
+  **turquoise** pour les miettes, **rose** pour les moyennes, **or** pour les
+  grosses, qui brillent aussi davantage. Chacune pose une petite flaque de
+  lumière colorée sur le sable.
+- **Les serpents** ont de grands yeux blancs à pupille noire, une rangée de
+  taches claires sur le dos, un reflet de lumière qui descend lentement le
+  long du corps, et deux teintes de la tête à la queue.
+- **L'interface** est en verre dépoli blanc, à l'encre bleu nuit, avec une
+  police épaisse et arrondie. Le menu porte un logo `SNAKE 3D` multicolore
+  dont les lettres ondulent.
+
+### Les effets
+
+Aucun effet ne touche aux règles ; ils ne font que montrer ce qui se passe.
+
+| Moment | Effet |
+| --- | --- |
+| Une gemme avalée (par n'importe quel serpent) | une gerbe d'étincelles de la couleur de la gemme |
+| Un serpent meurt | une grosse gerbe à ses couleurs et une onde de choc sur le sol |
+| Un serpent réapparaît | une gerbe et une onde claire |
+| Une caisse s'ouvre | des confettis de toutes les couleurs |
+| Un serpent est boosté | une traînée d'étincelles derrière sa tête |
+| En permanence | du pollen lumineux flotte dans l'air au-dessus de l'île |
+| Vous mourez | la caméra est secouée ; un peu aussi si quelqu'un meurt près de vous (moins de 14 unités) |
+| Vous ouvrez une caisse | une petite secousse |
+| Les 10 dernières secondes | l'horloge donne un coup à chaque seconde |
+
+**La série.** Avaler des gemmes à moins de 1,1 seconde d'intervalle forme une
+série. À partir de 3, un grand `x3 STREAK` s'affiche au centre de l'écran ;
+il grossit avec la série et change de couleur : turquoise, puis rose à 6, or
+à 10, et arc-en-ciel à partir de 15. **La série ne rapporte rien** : la
+longueur reste exactement ce qu'on a avalé. Elle est là pour le plaisir.
+
+En réseau, les gerbes d'avalement, de mort et de réapparition s'affichent
+aussi chez les clients (elles sont déduites de l'état reçu) ; les confettis
+de caisse et la série n'apparaissent que chez l'hôte et en solo.
+
 ## Les caméras et l'affichage
 
 - Quatre caméras (**C** pour changer) : suivi, vue d'ensemble, poursuite
@@ -196,6 +250,9 @@ partagent le terrain.
   - la finesse du maillage du serpent : `SIMPLE`, `SMOOTH` (défaut), `FINE` ;
   - la **synchronisation verticale**, activée ou non ;
   - la **limite d'images par seconde** : illimité, 30, 60, 120, 144, 240 ;
+  - les **effets** : `FULL` (défaut) ou `LIGHT`. `LIGHT` retire ce qui
+    n'est que décoratif (le pollen et les traînées de boost) et garde ce
+    qui informe (gerbes, ondes de choc, secousses) ;
   - le **mode debug**, qui affiche un compteur d'images en bas à gauche.
 - Tous ces réglages, le record et la dernière adresse IP utilisée sont
   conservés d'une session à l'autre.

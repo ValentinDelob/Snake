@@ -76,6 +76,49 @@ en mode `SMOOTH`, sans différence visible côte à côte.
 a laissé ainsi. Une traduction complète de l'interface en français reste une
 option ouverte, mais elle se ferait d'un bloc, pas au cas par cas.
 
+## La charte : un lagon solaire, lumineux et sucré
+
+Le propriétaire a demandé un jeu **lumineux, joli, plein d'effets**, qui
+donne envie d'y revenir, et qui reste jouable. La charte sombre (sol
+bleu nuit, motes blanches) a été remplacée par un après-midi ensoleillé :
+ciel azur et pêche, île de sable dans un lagon turquoise, cristaux pastel,
+remparts corail, gemmes colorées. Tout le détail est dans
+[`le-jeu.md`](le-jeu.md#lapparence--un-lagon-solaire).
+
+Ce qui a été décidé en chemin, et pourquoi :
+
+- **La valeur d'une gemme se lit à sa couleur** (turquoise → rose → or),
+  plus seulement à sa taille. Sur un sol clair, le blanc ne se distingue
+  plus ; une teinte, si.
+- **Tout ce qui compte pour jouer est saturé**, le décor est pâle. Le
+  premier essai était surexposé : sol presque blanc, gemmes brûlées en
+  blanc. On a baissé la lumière ambiante et l'exposition, foncé le sable, et
+  réduit l'émission des gemmes plutôt que de l'augmenter. Règle retenue :
+  sur fond clair, **plus d'émission veut dire plus blanc, pas plus
+  coloré**.
+- **Les surfaces additives ignorent le brouillard** (halos, étincelles, ondes
+  de choc). Sinon le brouillard s'ajoute à chaque pixel du quad et une
+  étincelle ronde devient un carré pâle vue de loin — c'était visible sur
+  toute l'arène en vue d'ensemble.
+- **L'interface est claire** (verre blanc, encre bleu nuit) pour aller avec
+  le décor. Les couleurs d'interface sont donc distinctes des couleurs des
+  serpents : `GOOD_COLOR` remplace le vert pâle de la tête du joueur partout
+  où il servait de texte.
+- **Les effets passent par l'état du jeu, pas par les événements**, là où
+  c'est possible : une mort, une réapparition ou une gemme avalée sont
+  détectées en comparant l'état d'une image à l'autre. Ainsi les clients
+  réseau les voient aussi, sans rien changer au protocole.
+- **La série de gemmes ne rapporte rien.** Elle aurait pu multiplier les
+  gains, mais le score *est* la longueur (voir plus haut) : elle reste
+  purement visuelle.
+- **Un réglage `EFFECTS`** (`FULL` / `LIGHT`) plutôt qu'un choix imposé, dans
+  l'esprit du réglage de finesse du corps. `LIGHT` retire seulement le
+  décoratif.
+- Les ombres du soleil portent désormais jusqu'à **150 unités**, assez pour
+  la plus grande arène vue en vue d'ensemble (c'était un point ouvert).
+- La géométrie reste low poly : une gemme compte 8 triangles, contre 56
+  pour l'ancienne bille ; les cristaux ont 4 faces.
+
 ## Le rendu est en Forward+ (Vulkan)
 
 Choisi à la suite d'un plantage du pilote graphique en mode compatibilité. Le
@@ -116,5 +159,11 @@ joueurs que personne ne voit arriver.
 - Il reste de rares à-coups d'affichage, une image sur cinq mille environ,
   dont le temps ne passe pas dans le code du jeu ; ils n'ont pas été
   expliqués.
-- Les ombres du soleil sont calculées jusqu'à 70 unités, alors que le terrain
-  en fait désormais 84 de large et davantage à plusieurs.
+- La première image d'une manche coûte jusqu'à 70 ms environ depuis la
+  nouvelle charte (nouveaux shaders et particules compilés au premier
+  affichage). Le reste de la manche tourne autour de 2,5 ms par image. Un
+  préchauffage des shaders au menu est la piste.
+- Les gemmes restent un peu pastel en vue rapprochée : le ciel s'y reflète et
+  le tone mapping ACES désature ce qui est très clair. Pousser leur émission
+  les blanchit ; la piste serait un autre tone mapper (AgX) ou une teinte
+  plus sombre.

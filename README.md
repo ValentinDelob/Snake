@@ -1,6 +1,6 @@
 # Snake 3D
 
-A snake that never stops, on a wide dark field strewn with glowing matter,
+A snake that never stops, on a sunlit sand island strewn with glowing gems,
 built with **Godot 4.7** and exported as a standalone Windows executable.
 It started life as a pygame prototype, kept working in `legacy/python`.
 
@@ -24,16 +24,21 @@ game/                      the Godot project (open this folder in Godot)
   scenes/main.tscn         world, sun, camera, board and HUD
   shaders/
     snake_body.gdshader    skin: gradient, belly, scales, rim, boost, ghost
-    arena_floor.gdshader   floor: anti-aliased grid, vignette, light pool
+    arena_floor.gdshader   floor: sand tiles, rippling light, edge blush, light pool
+    lagoon_water.gdshader  the turquoise lagoon round the island, surf and glitter
+    mote_gem.gdshader      the gems: hue by worth, spinning glints
+    soft_halo.gdshader     soft additive pools and rings of light on the floor
   scripts/
     game.gd                state machine, input, fixed-step simulation
     snake_world.gd         one snake: position, heading, girth, trailing path
     snake_match.gd         the round: field, rocks, items, deaths, the clock
     net/session.gd         autoload: hosting, joining, the peer list
-    board_view.gd          floor, ramparts, rocks, motes and the snake mesh
+    board_view.gd          island, lagoon, ramparts, rocks, gems and the snakes
+    fx_layer.gd            the juice: bursts, shockwaves, trails, pollen
+    world_look.gd          sky, sun, haze and bloom: the sunlit look
     snake_mesh.gd          the body: procedural tube, quality modes
-    camera_rig.gd          follow / overview / chase cameras + flat top view
-    hud.gd                 the interface, built in code
+    camera_rig.gd          follow / overview / chase cameras, flat view, shake
+    hud.gd                 the frosted-glass interface, logo and streak, in code
     ui/item_slot.gd        the item slot: bolt, ring and countdown
     journal.gd             autoload: structured logging
     profile_store.gd       autoload: best length and preferences

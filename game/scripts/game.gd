@@ -88,7 +88,10 @@ func _ready() -> void:
 	Journal.banner()
 	_parse_arguments()
 
-	_sun.rotation_degrees = Vector3(-62.0, -28.0, 0.0)
+	# Lower and more from the side than noon: long soft shadows are what
+	# give a bright scene its shape.
+	_sun.rotation_degrees = Vector3(-52.0, -34.0, 0.0)
+	WorldLook.dress($WorldEnvironment, _sun)
 
 	game_match = SnakeMatch.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, _seed)
 	game_match.snake_died.connect(_on_snake_died)
@@ -105,6 +108,7 @@ func _ready() -> void:
 		str(PlayerProfile.get_preference("quality"))
 	)
 	Journal.info("game", "Graphics mode: %s" % GameConfig.quality_mode()["name"])
+	GameConfig.effects_full = bool(PlayerProfile.get_preference("effects"))
 	_apply_display_settings()
 
 	_hud.solo_requested.connect(_start_solo)
@@ -114,6 +118,7 @@ func _ready() -> void:
 	_hud.vsync_toggled.connect(_toggle_vsync)
 	_hud.fps_limit_cycled.connect(_cycle_fps_limit)
 	_hud.debug_toggled.connect(_toggle_debug)
+	_hud.effects_toggled.connect(_toggle_effects)
 	_hud.rivals_cycled.connect(_cycle_rivals)
 	_hud.quit_requested.connect(func(): request_quit("menu-quit"))
 
@@ -209,6 +214,8 @@ var _last_death_cause: SnakeWorld.Outcome = SnakeWorld.Outcome.MOVING
 var _length_on_bar := -1.0       # the length the bar is already showing
 var _best_length := 0.0          # the longest snake of this session
 var _length_lost := 0.0          # how long the snake was when it last died
+var _streak := 0                 # gems swallowed in quick succession
+var _last_gain_at := -10.0
 
 
 ## --host and --join let a test (or a shortcut) open a session immediately.
@@ -296,6 +303,7 @@ func _refresh_hud() -> void:
 	# A death is announced by itself, so only gains are called out here.
 	if state == State.PLAY and _length_on_bar >= 0.0 and length > _length_on_bar:
 		_hud.announce_score(length - _length_on_bar)
+		_count_streak()
 	_length_on_bar = length
 	if length > _best_length:
 		_best_length = length
@@ -317,6 +325,22 @@ func _refresh_hud() -> void:
 		)
 		_hud.set_item(snake.carried, snake.effect, snake.effect_time_left, total)
 	_hud.set_players(_scoreboard(), Session.local_id(), spectating)
+
+
+## Gems swallowed one after the other make a streak. It is only for show -
+## the length is what it always was - but a count going up is hard to stop.
+func _count_streak() -> void:
+	if _play_time - _last_gain_at <= GameConfig.STREAK_WINDOW:
+		_streak += 1
+	else:
+		_streak = 1
+	_last_gain_at = _play_time
+	if _streak >= GameConfig.STREAK_SHOWN_FROM:
+		_hud.announce_streak(_streak)
+
+
+func streak() -> int:
+	return _streak
 
 
 ## A short name for a peer: the network id is a huge random number.
@@ -392,6 +416,13 @@ func _on_snake_died(id: int, cause: SnakeWorld.Outcome) -> void:
 	if id == Session.local_id():
 		_length_lost = snake.target_body_length
 		_on_local_death(snake)
+	else:
+		# Somebody bursting right next to you is felt as well as seen.
+		var mine = local_snake()
+		if mine != null and mine.alive and mine.head_position.distance_to(
+			snake.death_position
+		) < GameConfig.SHAKE_NEAR:
+			_camera.shake(GameConfig.SHAKE_NEAR_DEATH)
 
 
 ## Dying is not the end of anything any more: it costs you everything you
@@ -401,6 +432,8 @@ func _on_local_death(snake: SnakeWorld) -> void:
 	stats["max_score"] = maxi(int(stats["max_score"]), snake.score)
 	stats["deaths"] = int(stats["deaths"]) + 1
 	_hud.announce_loss(_length_lost)
+	_camera.shake(GameConfig.SHAKE_DEATH)
+	_streak = 0
 
 
 func _on_matter_spat(id: int, amount: int) -> void:
@@ -441,6 +474,12 @@ func _on_item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 				told = "opened a crate: speed boost, stored in the slot"
 	var snake: SnakeWorld = game_match.snakes[id]
 	_board.play_pickup_flash(snake.head_position, _elapsed, color)
+	if crate:
+		# A crate bursts into confetti whatever was inside: the surprise is
+		# the point, the colour of the flash tells the rest.
+		_board.fx().big_burst(snake.head_position, color, true)
+		if id == Session.local_id():
+			_camera.shake(GameConfig.SHAKE_CRATE)
 	Journal.info("game", "%s %s" % [_player_name(id), told])
 
 
@@ -467,7 +506,7 @@ func _show_result(winner: int) -> void:
 	if Session.is_online():
 		var mine := winner == Session.local_id()
 		var title := "BIGGEST" if mine else "OUTGROWN"
-		var color := GameConfig.SNAKE_HEAD_COLOR if mine else GameConfig.DANGER_COLOR
+		var color := GameConfig.GOOD_COLOR if mine else GameConfig.DANGER_COLOR
 		var subtitle := (
 			"nobody grew longer than you" if mine
 			else ("%s grew longer" % _player_name(winner) if winner > 0 else "nobody grew")
@@ -504,7 +543,7 @@ func _show_rival_result(winner: int, length: float, record: bool) -> void:
 	])
 	_hud.show_result(
 		"BIGGEST" if mine else "OUTGROWN",
-		GameConfig.SNAKE_HEAD_COLOR if mine else GameConfig.DANGER_COLOR,
+		GameConfig.GOOD_COLOR if mine else GameConfig.DANGER_COLOR,
 		subtitle, length, PlayerProfile.best_length(), record, "play again"
 	)
 
@@ -777,6 +816,14 @@ func _toggle_debug() -> void:
 	Journal.info("game", "Debug readout %s" % (
 		"on" if PlayerProfile.get_preference("debug") else "off"
 	))
+	_hud.refresh_menu_page()
+
+
+func _toggle_effects() -> void:
+	PlayerProfile.set_preference("effects", not bool(PlayerProfile.get_preference("effects")))
+	GameConfig.effects_full = bool(PlayerProfile.get_preference("effects"))
+	_board.fx().apply_setting()
+	Journal.info("game", "Effects: %s" % ("full" if GameConfig.effects_full else "light"))
 	_hud.refresh_menu_page()
 
 

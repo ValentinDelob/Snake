@@ -72,6 +72,18 @@ objet en pleine phase, et les phases savent recommencer pour cette raison.
 Les règles propres aux rivaux (tirer un éclair, régurgiter un dixième) sont
 vérifiées une fois les phases scriptées finies, pour ne pas les perturber.
 
+L'auto-test ne peut pas juger si c'est beau. Pour l'apparence, il vérifie
+seulement que :
+- le décor est bien sous un ciel ;
+- le réglage `EFFECTS` éteint et rallume le pollen ;
+- au moins dix gerbes d'effets partent pendant une manche ;
+- une série de gemmes est annoncée à l'écran ;
+- une mort secoue la caméra.
+
+**Le jugement visuel se fait sur des captures de l'exécutable réel**, dans
+chaque caméra. C'est ce qui a montré que le premier essai de la charte était
+surexposé et que les halos formaient des carrés vus de loin.
+
 **Toute règle nouvelle doit être ajoutée à l'auto-test.** C'est ce qui a
 permis d'attraper, entre autres : un serpent qui réapparaissait face à un
 rocher, un bouton de menu qui répondait encore aux touches en pleine partie,

@@ -24,6 +24,31 @@ var _arena := Vector2(30.0, 20.0)
 ## The menu shows the whole board whatever the player's own preference is.
 var _preview := false
 
+## Camera trauma: kicks add to it, it drains on its own, and the shake is its
+## square - so a small knock is a nudge and a death is a jolt.
+var _trauma := 0.0
+var _shake_time := 0.0
+
+
+## Shake the view. Amounts add up and are capped, so two deaths at once do
+## not throw the camera across the arena.
+func shake(amount: float) -> void:
+	_trauma = minf(1.0, _trauma + amount)
+
+
+func trauma() -> float:
+	return _trauma
+
+
+## Applied after the camera has been placed, as an offset of the lens, so it
+## never pushes the rig itself off course.
+func _apply_shake(delta: float) -> void:
+	_shake_time += delta
+	_trauma = maxf(0.0, _trauma - delta * 1.6)
+	var power := _trauma * _trauma
+	h_offset = sin(_shake_time * 47.0) * 0.55 * power
+	v_offset = sin(_shake_time * 39.0 + 1.3) * 0.45 * power
+
 
 func set_preview(value: bool) -> void:
 	if _preview == value:
@@ -119,6 +144,11 @@ func show_arena(delta: float) -> void:
 
 
 func update_rig(delta: float, world) -> void:
+	_update_pose(delta, world)
+	_apply_shake(delta)
+
+
+func _update_pose(delta: float, world) -> void:
 	if _spectating:
 		return
 	if world == null:

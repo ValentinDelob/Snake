@@ -93,15 +93,17 @@ static func food_radius(value: float) -> float:
 	return lerpf(FOOD_RADIUS, FOOD_RADIUS_MAX, sqrt(share))
 
 
-## The colour of a mote, brighter than white for the big ones so the glow
-## picks them out across the field.
+## The colour of a mote: a jewel whose hue climbs with its worth - turquoise
+## crumbs, pink mid-sized ones, gold for the prizes - so value reads at a
+## glance on a bright floor. Alpha carries the worth itself, which the gem
+## shader turns into how hard it glows.
 static func food_glow(value: float) -> Color:
 	var share := clampf((value - FOOD_VALUE.x) / (FOOD_VALUE.y - FOOD_VALUE.x), 0.0, 1.0)
-	return Color(
-		lerpf(1.15, 2.6, share),
-		lerpf(0.75, 1.5, share),
-		lerpf(0.45, 0.35, share)
-	)
+	var hue: Color = MOTE_SMALL_COLOR.lerp(MOTE_MID_COLOR, minf(share * 2.0, 1.0))
+	if share > 0.5:
+		hue = MOTE_MID_COLOR.lerp(MOTE_BIG_COLOR, (share - 0.5) * 2.0)
+	return Color(hue.r, hue.g, hue.b, share)
+
 ## How much matter lies about: one pellet per this many square units, so a
 ## bigger arena is not a barer one.
 const FOOD_PER_AREA := 46.0
@@ -247,32 +249,60 @@ const OBSTACLE_SPAWN_CLEAR := 5.0    # room left around a spawn point
 const OBSTACLE_LANE_LENGTH := 14.0   # how far ahead the spawn lane is kept clear
 const OBSTACLE_LANE_MIN := 6.0       # never less than this, however crowded
 const OBSTACLE_LANE_CLEAR := 2.2     # half width of that lane
-const OBSTACLE_COLOR := Color(0.24, 0.29, 0.38)
+# --------------------------------------------------------------------------- #
+# The look: a sunlit lagoon
+# --------------------------------------------------------------------------- #
+## A bright afternoon rather than a dark room: an azure sky melting into a
+## peach horizon, warm sand underfoot with light rippling over it, pastel
+## crystals for rocks and coral ramparts with a glowing lip. Everything that
+## matters to play - snakes, motes, items - is saturated, so it still reads
+## against the light floor from any camera.
+const SKY_TOP_COLOR := Color(0.33, 0.6, 0.98)
+const SKY_HORIZON_COLOR := Color(1.0, 0.8, 0.68)
+const GROUND_HORIZON_COLOR := Color(0.3, 0.72, 0.86)
+const FOG_COLOR := Color(1.0, 0.84, 0.74)
+const SUN_COLOR := Color(1.0, 0.93, 0.8)
 
-const FLOOR_COLOR := Color(0.13, 0.17, 0.23)
-const GRID_COLOR := Color(0.18, 0.22, 0.29)
-const WALL_COLOR := Color(0.27, 0.34, 0.43)
-const SNAKE_HEAD_COLOR := Color(0.47, 1.0, 0.59)
-const SNAKE_BODY_COLOR := Color(0.0, 0.78, 0.35)
-const SNAKE_TAIL_COLOR := Color(0.0, 0.33, 0.18)
-const FOOD_COLOR := Color(1.0, 0.27, 0.27)
-const EYE_COLOR := Color(0.04, 0.08, 0.05)
+const FLOOR_COLOR := Color(0.9, 0.76, 0.6)
+const GRID_COLOR := Color(0.8, 0.62, 0.48)
+const CAUSTIC_COLOR := Color(1.0, 0.98, 0.9)
+const FLOOR_EDGE_COLOR := Color(0.95, 0.6, 0.55)
+const WALL_COLOR := Color(1.0, 0.52, 0.5)
+const WALL_GLOW_COLOR := Color(1.0, 0.86, 0.95)
+const OBSTACLE_COLOR := Color(0.6, 0.58, 0.93)
+const OBSTACLE_TOP_COLOR := Color(0.86, 0.8, 1.0)
+const POLLEN_COLOR := Color(1.0, 0.96, 0.8)
+const WATER_SHALLOW_COLOR := Color(0.16, 0.82, 0.84)
+const WATER_DEEP_COLOR := Color(0.04, 0.4, 0.74)
 
-const BOOST_COLOR := Color(1.0, 0.86, 0.28)
+## Motes are jewels: turquoise crumbs, pink mid-sized ones, gold prizes.
+const MOTE_SMALL_COLOR := Color(0.0, 0.72, 0.95)
+const MOTE_MID_COLOR := Color(0.95, 0.12, 0.58)
+const MOTE_BIG_COLOR := Color(1.0, 0.6, 0.0)
+
+const SNAKE_HEAD_COLOR := Color(0.6, 1.0, 0.55)
+const SNAKE_BODY_COLOR := Color(0.06, 0.82, 0.42)
+const SNAKE_TAIL_COLOR := Color(0.0, 0.5, 0.45)
+const FOOD_COLOR := Color(1.0, 0.33, 0.72)
+const EYE_COLOR := Color(0.06, 0.07, 0.16)
+
+const BOOST_COLOR := Color(1.0, 0.8, 0.2)
 const SPARK_COLOR := Color(1.0, 0.98, 0.78)
-const MYSTERY_COLOR := Color(0.72, 0.45, 1.0)
-const PHASE_COLOR := Color(1.0, 0.93, 0.36)
+const MYSTERY_COLOR := Color(0.7, 0.4, 1.0)
+const PHASE_COLOR := Color(1.0, 0.9, 0.3)
 const PHASE_PALE_COLOR := Color(1.0, 0.99, 0.82)
-const FROST_COLOR := Color(0.48, 0.78, 1.0)
+const FROST_COLOR := Color(0.4, 0.74, 1.0)
 const FROST_PALE_COLOR := Color(0.85, 0.95, 1.0)
 
 ## One palette per player: head, body, tail. The first is always yours.
+## Each one runs through two hues from head to tail, so a body reads as a
+## ribbon of colour rather than a hose of one.
 const PLAYER_PALETTES := [
-	[Color(0.47, 1.0, 0.59), Color(0.0, 0.78, 0.35), Color(0.0, 0.33, 0.18)],
-	[Color(0.55, 0.86, 1.0), Color(0.12, 0.52, 0.95), Color(0.05, 0.2, 0.48)],
-	[Color(1.0, 0.78, 0.45), Color(0.95, 0.5, 0.12), Color(0.45, 0.19, 0.03)],
-	[Color(1.0, 0.62, 0.95), Color(0.83, 0.2, 0.7), Color(0.38, 0.06, 0.32)],
-	[Color(0.85, 0.95, 0.5), Color(0.55, 0.78, 0.1), Color(0.22, 0.33, 0.03)],
+	[Color(0.6, 1.0, 0.55), Color(0.06, 0.82, 0.42), Color(0.0, 0.5, 0.45)],
+	[Color(0.62, 0.88, 1.0), Color(0.15, 0.5, 1.0), Color(0.32, 0.2, 0.85)],
+	[Color(1.0, 0.86, 0.42), Color(1.0, 0.42, 0.18), Color(0.85, 0.12, 0.3)],
+	[Color(1.0, 0.72, 0.96), Color(0.9, 0.25, 0.75), Color(0.5, 0.16, 0.8)],
+	[Color(0.62, 1.0, 0.96), Color(0.0, 0.74, 0.8), Color(0.0, 0.38, 0.62)],
 ]
 
 
@@ -280,7 +310,31 @@ static func palette_for(index: int) -> Array:
 	return PLAYER_PALETTES[index % PLAYER_PALETTES.size()]
 
 
-const ACCENT_COLOR := Color(1.0, 0.82, 0.31)
-const DANGER_COLOR := Color(1.0, 0.35, 0.35)
-const TEXT_COLOR := Color(0.93, 0.94, 0.96)
-const DIM_COLOR := Color(0.51, 0.56, 0.62)
+## The interface sits on frosted white glass, so its ink is dark and its
+## accents deep enough to read on it.
+const ACCENT_COLOR := Color(1.0, 0.5, 0.1)
+const DANGER_COLOR := Color(0.93, 0.2, 0.33)
+const GOOD_COLOR := Color(0.05, 0.64, 0.38)
+const TEXT_COLOR := Color(0.12, 0.15, 0.3)
+const DIM_COLOR := Color(0.4, 0.45, 0.6)
+
+# --------------------------------------------------------------------------- #
+# Effects
+# --------------------------------------------------------------------------- #
+## FULL draws everything below; LIGHT keeps what tells you something (the
+## bursts, the shockwave, the shake) and drops what is only there to be
+## pretty (the pollen in the air and the sparks behind a boosted snake).
+static var effects_full := true
+
+const POLLEN_PER_AREA := 14.0        # one floating speck per this many units²
+const POLLEN_MAX := 520
+const BURST_EAT_SPARKS := 14         # sparks thrown by a swallowed gem
+const BURST_BIG_SPARKS := 72         # by a death, a crate or a comeback
+const SHAKE_DEATH := 0.8             # camera trauma when you die
+const SHAKE_NEAR_DEATH := 0.35       # when somebody dies close to you
+const SHAKE_CRATE := 0.25
+const SHAKE_NEAR := 14.0             # how close "close" is, in units
+## Swallowing gems in quick succession makes a streak: purely for show, it
+## never changes what they are worth.
+const STREAK_WINDOW := 1.1           # seconds allowed between two gems
+const STREAK_SHOWN_FROM := 3

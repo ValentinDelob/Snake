@@ -11,6 +11,7 @@ signal vsync_toggled()
 signal fps_limit_cycled()
 signal debug_toggled()
 signal rivals_cycled()
+signal effects_toggled()
 signal quit_requested()
 
 ## The interface: a slim top bar while playing, and a centred card for the
@@ -20,11 +21,16 @@ signal quit_requested()
 ## StyleBoxFlat rather than plain text, so the layout holds at any window
 ## size and there is a single place to change the look.
 
-const PANEL_COLOR := Color(0.04, 0.06, 0.1, 0.72)
-const CARD_COLOR := Color(0.04, 0.055, 0.09, 0.93)
-const KEYCAP_COLOR := Color(0.13, 0.17, 0.24, 0.95)
-const BORDER_COLOR := Color(0.35, 0.42, 0.52, 0.55)
-const BUTTON_COLOR := Color(0.1, 0.13, 0.19, 0.95)
+## Frosted white glass over a sunny scene: bright panels, dark ink, and
+## a soft navy shadow under everything so it floats above the arena.
+const PANEL_COLOR := Color(1.0, 1.0, 1.0, 0.8)
+const CARD_COLOR := Color(1.0, 0.99, 0.97, 0.95)
+const KEYCAP_COLOR := Color(1.0, 1.0, 1.0, 1.0)
+const BORDER_COLOR := Color(0.12, 0.15, 0.3, 0.14)
+const BUTTON_COLOR := Color(0.95, 0.95, 1.0, 1.0)
+const SHADOW_COLOR := Color(0.1, 0.12, 0.35, 0.2)
+## The letters of the logo, one colour each, taken from the snakes.
+const LOGO_TEXT := "SNAKE 3D"
 
 ## The menu is three pages deep: the main one, the multiplayer choice, and
 ## the address box behind "join".
@@ -38,6 +44,7 @@ var _item_slot: ItemSlot
 var _item_hint: Control
 var _boost_label: Label
 var _players_box: VBoxContainer
+var _players_pill: PanelContainer
 var _spectator_label: Label
 
 var _overlay: Control
@@ -76,9 +83,14 @@ var _shown_score := -1
 var _breath := 0.0
 var _score_note: Label
 var _score_note_time := 0.0
+var _logo: HBoxContainer
+var _streak_label: Label
+var _streak_time := 0.0
+var _theme: Theme
 
 
 func _ready() -> void:
+	_theme = _build_theme()
 	_build_top_bar()
 	_build_overlay()
 
@@ -92,14 +104,28 @@ func _process(delta: float) -> void:
 	if _score_note_time > 0.0:
 		_score_note_time = maxf(0.0, _score_note_time - delta)
 		_score_note.modulate.a = minf(1.0, _score_note_time / 0.4)
+	if _streak_time > 0.0:
+		_streak_time = maxf(0.0, _streak_time - delta)
+		_streak_label.modulate.a = minf(1.0, _streak_time / 0.35)
+		if _streak_label.get_meta("rainbow", false):
+			_streak_label.add_theme_color_override(
+				"font_color", Color.from_hsv(fmod(_breath * 0.8, 1.0), 0.75, 1.0)
+			)
+		_breath += delta
 	if not _overlay.visible:
 		return
 	_breath += delta
 	_cta_panel.modulate.a = 0.78 + 0.22 * (0.5 + 0.5 * sin(_breath * 2.4))
+	# The logo bobs letter by letter, a slow wave running through it.
+	if _logo.visible:
+		for index in range(_logo.get_child_count()):
+			var letter := _logo.get_child(index) as Label
+			letter.position.y = sin(_breath * 3.0 - index * 0.55) * 5.0
 
 
 func _build_top_bar() -> void:
 	_top_bar = Control.new()
+	_top_bar.theme = _theme
 	_top_bar.name = "TopBar"
 	_top_bar.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -206,14 +232,17 @@ func _build_top_bar() -> void:
 	item_column.add_child(_boost_label)
 
 	# Who else is in the round, and who is still alive
+	_players_pill = _pill()
+	_players_pill.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_players_pill.offset_right = -22
+	_players_pill.offset_top = 74
+	_players_pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_players_pill.visible = false
+	_top_bar.add_child(_players_pill)
 	_players_box = VBoxContainer.new()
-	_players_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_players_box.offset_right = -22
-	_players_box.offset_top = 74
-	_players_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_players_box.alignment = BoxContainer.ALIGNMENT_END
-	_players_box.add_theme_constant_override("separation", 4)
-	_top_bar.add_child(_players_box)
+	_players_box.add_theme_constant_override("separation", 2)
+	_players_pill.add_child(_players_box)
 
 	# The debug readout. One line for now; it is a column so the next thing
 	# worth watching can simply be added under it.
@@ -241,6 +270,17 @@ func _build_top_bar() -> void:
 	_spectator_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_spectator_label.visible = false
 	_top_bar.add_child(_spectator_label)
+
+	# The streak: a big word in the middle of the screen, counting gems
+	# swallowed back to back and changing colour as the count climbs.
+	_streak_label = _label("", 40, GameConfig.MOTE_SMALL_COLOR)
+	_outline(_streak_label, 10)
+	_streak_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_streak_label.offset_top = 96
+	_streak_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_streak_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_streak_label.modulate.a = 0.0
+	_top_bar.add_child(_streak_label)
 
 
 ## The two numbers that matter now: how long this snake is, and the longest
@@ -273,6 +313,9 @@ func set_clock(seconds: float) -> void:
 		return
 	_shown_clock = whole
 	_clock.text = "%d:%02d" % [whole / 60, whole % 60]
+	# The last ten seconds tick loudly: every one of them gives the clock a kick.
+	if whole <= 10 and whole > 0:
+		_punch(_clock)
 	_clock.add_theme_color_override(
 		"font_color",
 		GameConfig.DANGER_COLOR if whole <= 30 else GameConfig.TEXT_COLOR
@@ -317,7 +360,7 @@ func announce_score(points: float) -> void:
 	_score_note.text = "+%.1f" % points if points > 0.0 else "%.1f" % points
 	_score_note.add_theme_color_override(
 		"font_color",
-		GameConfig.SNAKE_HEAD_COLOR if points > 0.0 else GameConfig.DANGER_COLOR
+		GameConfig.GOOD_COLOR if points > 0.0 else GameConfig.DANGER_COLOR
 	)
 	_score_note_time = 1.6
 	_score_note.modulate.a = 1.0
@@ -349,6 +392,7 @@ func set_item(carried: int, effect: int, time_left: float, total: float) -> void
 ## One line per player while a match is on; hidden when playing solo.
 func set_players(rows: Array, local_id: int, spectating: bool) -> void:
 	_players_box.visible = rows.size() > 1
+	_players_pill.visible = _players_box.visible
 	if _players_box.visible:
 		while _players_box.get_child_count() < rows.size():
 			_players_box.add_child(_label("", 15, GameConfig.TEXT_COLOR))
@@ -372,7 +416,7 @@ func set_players(rows: Array, local_id: int, spectating: bool) -> void:
 			]
 			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			label.add_theme_color_override(
-				"font_color", palette[0] if row["alive"] else GameConfig.DIM_COLOR
+				"font_color", palette[1] if row["alive"] else GameConfig.DIM_COLOR
 			)
 
 	_spectator_label.visible = spectating
@@ -389,6 +433,7 @@ func set_bar_visible(value: bool) -> void:
 # --------------------------------------------------------------------------- #
 func _build_overlay() -> void:
 	_overlay = Control.new()
+	_overlay.theme = _theme
 	_overlay.name = "Overlay"
 	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -396,7 +441,9 @@ func _build_overlay() -> void:
 
 	var dim := ColorRect.new()
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.01, 0.02, 0.04, 0.55)
+	# A light navy veil: enough to lift the white card off a bright scene,
+	# not so much that the arena behind it goes dark.
+	dim.color = Color(0.1, 0.12, 0.32, 0.3)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overlay.add_child(dim)
 
@@ -420,7 +467,19 @@ func _build_overlay() -> void:
 	card_box.add_theme_constant_override("separation", 14)
 	margin.add_child(card_box)
 
-	_title = _label("SNAKE 3D", 52, GameConfig.SNAKE_HEAD_COLOR)
+	_logo = HBoxContainer.new()
+	_logo.alignment = BoxContainer.ALIGNMENT_CENTER
+	_logo.add_theme_constant_override("separation", 2)
+	for index in range(LOGO_TEXT.length()):
+		var palette: Array = GameConfig.palette_for(index)
+		var letter := _label(LOGO_TEXT[index], 64, palette[1])
+		_outline(letter, 12)
+		letter.custom_minimum_size = Vector2(24 if LOGO_TEXT[index] == " " else 0, 84)
+		_logo.add_child(letter)
+	card_box.add_child(_logo)
+
+	_title = _label("SNAKE 3D", 56, GameConfig.GOOD_COLOR)
+	_outline(_title, 10)
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	card_box.add_child(_title)
 
@@ -471,8 +530,11 @@ func menu_back() -> bool:
 
 func _show_menu_page(page: MenuPage) -> void:
 	_menu_page = page
+	# The big coloured logo belongs to the front page; the pages behind it
+	# are tall enough already.
+	_use_logo(page == MenuPage.MAIN)
 	_title.text = "SNAKE 3D"
-	_title.add_theme_color_override("font_color", GameConfig.SNAKE_HEAD_COLOR)
+	_title.add_theme_color_override("font_color", GameConfig.GOOD_COLOR)
 	_cta_holder.visible = false
 	_address_field = null
 
@@ -542,6 +604,12 @@ func _show_menu_page(page: MenuPage) -> void:
 				),
 				"action": func(): fps_limit_cycled.emit(),
 			})
+			# Sparks, pollen and trails: pure show, so they can be turned down
+			# without losing anything the game says.
+			entries.append({
+				"text": "EFFECTS  %s" % ("FULL" if PlayerProfile.get_preference("effects") else "LIGHT"),
+				"action": func(): effects_toggled.emit(),
+			})
 			entries.append({
 				"text": "DEBUG  %s" % ("ON" if PlayerProfile.get_preference("debug") else "OFF"),
 				"action": func(): debug_toggled.emit(),
@@ -592,6 +660,9 @@ func _set_buttons(entries: Array) -> void:
 			control = _build_address_field()
 		else:
 			control = _build_button(entry["text"], entry.get("primary", false), entry["action"])
+			# A long page gets slimmer buttons so it still fits a small window.
+			if entries.size() > 6:
+				control.custom_minimum_size.y = 40
 		_buttons.add_child(control)
 		_menu_items.append(control)
 
@@ -647,19 +718,20 @@ func menu_open() -> bool:
 func _build_button(text: String, primary: bool, action) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(300, 46)
+	button.custom_minimum_size = Vector2(320, 50)
 	button.focus_mode = Control.FOCUS_ALL
-	button.add_theme_font_size_override("font_size", 18)
+	button.add_theme_font_size_override("font_size", 19)
 
-	var accent: Color = GameConfig.SNAKE_HEAD_COLOR if primary else GameConfig.TEXT_COLOR
-	button.add_theme_color_override("font_color", accent)
-	button.add_theme_color_override("font_hover_color", Color.WHITE)
-	button.add_theme_color_override("font_focus_color", Color.WHITE)
-	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	# The primary button is a solid green sweet with white letters; the rest
+	# are white glass with dark ink. Whatever has the focus gets an orange
+	# ring, so the keyboard always shows where it is.
+	var ink: Color = Color.WHITE if primary else GameConfig.TEXT_COLOR
+	for state: String in ["font_color", "font_hover_color", "font_focus_color", "font_pressed_color"]:
+		button.add_theme_color_override(state, ink)
 	button.add_theme_stylebox_override("normal", _button_style(primary, 0.0))
-	button.add_theme_stylebox_override("hover", _button_style(primary, 0.12))
-	button.add_theme_stylebox_override("pressed", _button_style(primary, 0.2))
-	button.add_theme_stylebox_override("focus", _button_style(primary, 0.08, true))
+	button.add_theme_stylebox_override("hover", _button_style(primary, 0.08))
+	button.add_theme_stylebox_override("pressed", _button_style(primary, -0.08))
+	button.add_theme_stylebox_override("focus", _button_style(primary, 0.06, true))
 
 	if action is Signal:
 		button.pressed.connect(func(): action.emit())
@@ -669,16 +741,22 @@ func _build_button(text: String, primary: bool, action) -> Button:
 
 
 func _button_style(primary: bool, lift: float, focused: bool = false) -> StyleBoxFlat:
-	var accent: Color = GameConfig.SNAKE_HEAD_COLOR if primary else GameConfig.TEXT_COLOR
 	var style := StyleBoxFlat.new()
-	style.bg_color = (
-		Color(accent.r, accent.g, accent.b, 0.16 + lift) if primary
-		else Color(BUTTON_COLOR.r, BUTTON_COLOR.g, BUTTON_COLOR.b, 0.95 + lift)
-	)
-	style.set_corner_radius_all(14)
+	if primary:
+		style.bg_color = GameConfig.GOOD_COLOR.lightened(0.1 + lift)
+	elif focused:
+		style.bg_color = Color(1.0, 0.95, 0.88).lightened(lift)
+	else:
+		style.bg_color = BUTTON_COLOR.lightened(lift)
+	style.set_corner_radius_all(25)
 	style.set_content_margin_all(10)
-	style.border_color = Color(accent.r, accent.g, accent.b, 0.75 if focused else 0.4)
-	style.set_border_width_all(2 if focused else 1)
+	style.border_color = GameConfig.ACCENT_COLOR if focused else (
+		GameConfig.GOOD_COLOR.darkened(0.2) if primary else BORDER_COLOR
+	)
+	style.set_border_width_all(3 if focused else 1)
+	style.shadow_color = SHADOW_COLOR
+	style.shadow_size = 8 if focused else 4
+	style.shadow_offset = Vector2(0, 3)
 	return style
 
 
@@ -731,6 +809,7 @@ func set_address(address: String) -> void:
 
 ## The waiting room, before the host starts the round.
 func show_lobby(is_host: bool, players: int, addresses: String, dialling: String = "") -> void:
+	_use_logo(false)
 	_title.text = "LOBBY"
 	_title.add_theme_color_override("font_color", GameConfig.ACCENT_COLOR)
 	if dialling != "":
@@ -745,7 +824,7 @@ func show_lobby(is_host: bool, players: int, addresses: String, dialling: String
 		_set_chips([])
 	else:
 		_set_chips([
-			["PLAYERS", str(players), GameConfig.SNAKE_HEAD_COLOR],
+			["PLAYERS", str(players), GameConfig.GOOD_COLOR],
 		])
 	if dialling != "":
 		_set_call_to_action("...", "connecting")
@@ -765,6 +844,7 @@ func show_result(
 	title: String, color: Color, subtitle: String, length: float, best: float, record: bool,
 	again: String = "back to the lobby"
 ) -> void:
+	_use_logo(false)
 	_title.text = title
 	_title.add_theme_color_override("font_color", color)
 	_subtitle.text = subtitle
@@ -783,6 +863,7 @@ func show_result(
 
 
 func show_pause() -> void:
+	_use_logo(false)
 	_title.text = "PAUSED"
 	_title.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
 	_subtitle.text = ""
@@ -795,6 +876,7 @@ func show_pause() -> void:
 
 
 func show_game_over(cause: String, length: float, best: float, record: bool) -> void:
+	_use_logo(false)
 	_title.text = "TIME"
 	_title.add_theme_color_override("font_color", GameConfig.ACCENT_COLOR)
 	_subtitle.text = cause
@@ -852,30 +934,27 @@ func _punch(node: Control) -> void:
 func _build_call_to_action() -> void:
 	_cta_panel = PanelContainer.new()
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(
-		GameConfig.SNAKE_BODY_COLOR.r, GameConfig.SNAKE_BODY_COLOR.g,
-		GameConfig.SNAKE_BODY_COLOR.b, 0.18
-	)
-	style.set_corner_radius_all(16)
+	style.bg_color = GameConfig.GOOD_COLOR.lightened(0.1)
+	style.set_corner_radius_all(26)
 	style.set_content_margin_all(12)
-	style.content_margin_left = 22
-	style.content_margin_right = 22
-	style.border_color = Color(
-		GameConfig.SNAKE_HEAD_COLOR.r, GameConfig.SNAKE_HEAD_COLOR.g,
-		GameConfig.SNAKE_HEAD_COLOR.b, 0.6
-	)
+	style.content_margin_left = 24
+	style.content_margin_right = 28
+	style.border_color = GameConfig.GOOD_COLOR.darkened(0.2)
 	style.set_border_width_all(1)
+	style.shadow_color = SHADOW_COLOR
+	style.shadow_size = 8
+	style.shadow_offset = Vector2(0, 3)
 	_cta_panel.add_theme_stylebox_override("panel", style)
 
 	var box := HBoxContainer.new()
-	box.add_theme_constant_override("separation", 10)
+	box.add_theme_constant_override("separation", 12)
 	_cta_panel.add_child(box)
 
 	var keycap := _keycap("ENTER")
 	_cta_key = keycap.get_child(0) as Label
 	box.add_child(keycap)
 
-	_cta_action = _label("play", 20, GameConfig.SNAKE_HEAD_COLOR)
+	_cta_action = _label("play", 22, Color.WHITE)
 	_cta_action.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	box.add_child(_cta_action)
 
@@ -927,10 +1006,15 @@ func _pill() -> PanelContainer:
 	var panel := PanelContainer.new()
 	var style := StyleBoxFlat.new()
 	style.bg_color = PANEL_COLOR
-	style.set_corner_radius_all(18)
+	style.set_corner_radius_all(20)
 	style.set_content_margin_all(8)
 	style.content_margin_left = 16
 	style.content_margin_right = 16
+	style.border_color = Color(1.0, 1.0, 1.0, 0.95)
+	style.set_border_width_all(1)
+	style.shadow_color = SHADOW_COLOR
+	style.shadow_size = 10
+	style.shadow_offset = Vector2(0, 3)
 	panel.add_theme_stylebox_override("panel", style)
 	return panel
 
@@ -939,12 +1023,12 @@ func _chip(caption: String, value: String, color: Color) -> PanelContainer:
 	var panel := PanelContainer.new()
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(color.r, color.g, color.b, 0.12)
-	style.set_corner_radius_all(14)
+	style.set_corner_radius_all(18)
 	style.set_content_margin_all(8)
-	style.content_margin_left = 14
-	style.content_margin_right = 14
-	style.border_color = Color(color.r, color.g, color.b, 0.35)
-	style.set_border_width_all(1)
+	style.content_margin_left = 16
+	style.content_margin_right = 16
+	style.border_color = Color(color.r, color.g, color.b, 0.45)
+	style.set_border_width_all(2)
 	panel.add_theme_stylebox_override("panel", style)
 
 	var box := HBoxContainer.new()
@@ -953,7 +1037,7 @@ func _chip(caption: String, value: String, color: Color) -> PanelContainer:
 	var caption_label := _label(caption, 12, GameConfig.DIM_COLOR)
 	caption_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	box.add_child(caption_label)
-	box.add_child(_label(value, 18, color))
+	box.add_child(_label(value, 20, color.darkened(0.15)))
 	return panel
 
 
@@ -974,15 +1058,17 @@ func _keycap(text: String) -> PanelContainer:
 	var panel := PanelContainer.new()
 	var style := StyleBoxFlat.new()
 	style.bg_color = KEYCAP_COLOR
-	style.set_corner_radius_all(6)
+	style.set_corner_radius_all(8)
 	style.set_content_margin_all(4)
-	style.content_margin_left = 9
-	style.content_margin_right = 9
+	style.content_margin_left = 10
+	style.content_margin_right = 10
 	style.border_color = BORDER_COLOR
 	style.set_border_width_all(1)
-	style.shadow_color = Color(0, 0, 0, 0.35)
-	style.shadow_size = 2
-	style.shadow_offset = Vector2(0, 1)
+	# A deeper shadow underneath than around: it reads as a key you could press.
+	style.border_width_bottom = 3
+	style.shadow_color = SHADOW_COLOR
+	style.shadow_size = 3
+	style.shadow_offset = Vector2(0, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.add_child(_label(text, 13, GameConfig.TEXT_COLOR))
 	return panel
@@ -991,9 +1077,63 @@ func _keycap(text: String) -> PanelContainer:
 func _card_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = CARD_COLOR
-	style.set_corner_radius_all(22)
-	style.border_color = BORDER_COLOR
-	style.set_border_width_all(1)
-	style.shadow_color = Color(0, 0, 0, 0.5)
-	style.shadow_size = 18
+	style.set_corner_radius_all(32)
+	style.border_color = Color(1.0, 1.0, 1.0, 1.0)
+	style.set_border_width_all(2)
+	style.shadow_color = Color(0.1, 0.12, 0.35, 0.3)
+	style.shadow_size = 30
+	style.shadow_offset = Vector2(0, 10)
 	return style
+
+
+## A white outline and a soft drop shadow: what makes big lettering look
+## like a sticker rather than print, and keeps it legible over anything.
+func _outline(label: Label, size: int) -> void:
+	label.add_theme_color_override("font_outline_color", Color.WHITE)
+	label.add_theme_constant_override("outline_size", size)
+	label.add_theme_color_override("font_shadow_color", SHADOW_COLOR)
+	label.add_theme_constant_override("shadow_offset_x", 0)
+	label.add_theme_constant_override("shadow_offset_y", 4)
+	label.add_theme_constant_override("shadow_outline_size", size + 4)
+
+
+## One rounded, heavy face for the whole interface. It is a system font, so
+## nothing has to ship with the game; the engine falls back on its own if
+## none of these is installed.
+func _build_theme() -> Theme:
+	var font := SystemFont.new()
+	font.font_names = PackedStringArray(["Segoe UI Black", "Segoe UI", "Arial Rounded MT Bold", "Arial"])
+	font.font_weight = 800
+	font.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
+	var theme := Theme.new()
+	theme.default_font = font
+	theme.default_font_size = 16
+	return theme
+
+
+## Say a streak out loud: "x6 STREAK" in the middle of the screen, in a
+## colour that climbs with it - turquoise, pink, gold, then every colour.
+func announce_streak(count: int) -> void:
+	_streak_label.text = "x%d  STREAK" % count
+	var color := GameConfig.MOTE_SMALL_COLOR.darkened(0.15)
+	if count >= 6:
+		color = GameConfig.MOTE_MID_COLOR
+	if count >= 10:
+		color = GameConfig.ACCENT_COLOR
+	_streak_label.set_meta("rainbow", count >= 15)
+	_streak_label.add_theme_color_override("font_color", color)
+	_streak_label.add_theme_font_size_override("font_size", mini(64, 36 + count * 2))
+	_streak_time = 1.3
+	_streak_label.modulate.a = 1.0
+	_punch(_streak_label)
+
+
+## What the streak line says right now, for the self-test.
+func streak_readout() -> String:
+	return _streak_label.text if _streak_time > 0.0 else ""
+
+
+## The menu wears the coloured logo; every other card, a plain title.
+func _use_logo(value: bool) -> void:
+	_logo.visible = value
+	_title.visible = not value

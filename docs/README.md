@@ -18,7 +18,8 @@ touches. Il reste la référence pour « où se trouve quoi ».
 
 ## Le jeu en trois phrases
 
-Un serpent se déplace sans jamais s'arrêter sur un grand terrain sombre, et
+Un serpent se déplace sans jamais s'arrêter sur une grande île de sable
+ensoleillée, posée dans un lagon turquoise, et
 on ne le dirige qu'en le faisant tourner à gauche ou à droite. Il ramasse de
 la matière lumineuse éparpillée au sol : **plus il en avale, plus il est long,
 large, lent et difficile à manœuvrer**. Au bout de cinq minutes, le plus gros

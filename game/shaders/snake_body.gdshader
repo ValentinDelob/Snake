@@ -46,6 +46,13 @@ void fragment() {
 	float belly = smoothstep(0.22, 0.0, abs(around - 0.75));
 	base = mix(base, belly_color * 0.75, belly * 0.5);
 
+	// A saddle of bright spots running down the back, in the head colour:
+	// it is the pattern that makes a tube read as a snake, and it gives each
+	// palette a second colour to show off.
+	float back = smoothstep(0.2, 0.0, abs(around - 0.25));
+	float spots = smoothstep(0.35, 0.8, 0.5 + 0.5 * sin(along * 58.0));
+	base = mix(base, head_color * 1.08, back * spots * 0.45 * smoothstep(0.08, 0.2, along));
+
 	// Diamond scales: a couple of percent of shading, just enough to catch
 	// the light and stop the body reading as plastic.
 	float scales = sin(along * scale_density) * sin(around * TAU_ * 5.0);
@@ -60,13 +67,19 @@ void fragment() {
 	}
 
 	ALBEDO = base;
-	ROUGHNESS = mix(0.55, 0.25, belly) + slow * 0.3;
-	SPECULAR = 0.55;
+	ROUGHNESS = mix(0.38, 0.22, belly) + slow * 0.3;
+	SPECULAR = 0.7;
 	METALLIC = 0.0;
 
 	// Rim light: a thin bright edge that separates the snake from the floor.
 	float rim = pow(1.0 - clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0), 3.5);
-	vec3 emission = base * rim * 0.22;
+	// Whiter than the skin, so the silhouette pops off a bright floor.
+	vec3 emission = mix(base, vec3(1.0), 0.35) * rim * 0.3;
+
+	// A slow shimmer of light travelling from head to tail, all the time:
+	// the body is always a little alive, even cruising.
+	float pulse = pow(max(sin((along * 3.0 - TIME * 0.7) * TAU_), 0.0), 8.0);
+	emission += mix(body_color, head_color, 0.6) * pulse * 0.18;
 
 	// The head always glows a little, more so right after a bite.
 	float head_mask = smoothstep(0.14, 0.0, along);

@@ -1,40 +1,23 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/camera_rig.gd" id="2_camera"]
 [ext_resource type="Script" path="res://scripts/board_view.gd" id="3_board"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
 
-[sub_resource type="Environment" id="Environment_1"]
-background_mode = 1
-background_color = Color(0.018, 0.024, 0.045, 1)
-ambient_light_source = 2
-ambient_light_color = Color(0.46, 0.5, 0.56, 1)
-ambient_light_energy = 0.32
-tonemap_mode = 3
-tonemap_exposure = 1.0
-tonemap_white = 1.6
-glow_enabled = true
-glow_intensity = 0.7
-glow_strength = 1.0
-glow_bloom = 0.05
-glow_blend_mode = 1
-glow_hdr_threshold = 1.1
-
 [node name="Main" type="Node3D"]
 script = ExtResource("1_game")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_1")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
-light_color = Color(1, 0.96, 0.89, 1)
-light_energy = 1.05
-light_angular_distance = 1.2
+light_color = Color(1, 0.93, 0.8, 1)
+light_energy = 1.35
+light_angular_distance = 1.5
 shadow_enabled = true
 shadow_bias = 0.04
 shadow_normal_bias = 1.5
-directional_shadow_max_distance = 70.0
+directional_shadow_max_distance = 150.0
 
 [node name="Camera" type="Camera3D" parent="."]
 script = ExtResource("2_camera")
