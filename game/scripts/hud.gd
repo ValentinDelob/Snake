@@ -29,6 +29,8 @@ const KEYCAP_COLOR := Color(1.0, 1.0, 1.0, 1.0)
 const BORDER_COLOR := Color(0.12, 0.15, 0.3, 0.14)
 const BUTTON_COLOR := Color(0.95, 0.95, 1.0, 1.0)
 const SHADOW_COLOR := Color(0.1, 0.12, 0.35, 0.2)
+## How far down the item slot sits: the score pill ends around 74 px.
+const ITEM_SLOT_TOP := 92
 ## The letters of the logo, one colour each, taken from the snakes.
 const LOGO_TEXT := "SNAKE 3D"
 
@@ -196,9 +198,10 @@ func _build_top_bar() -> void:
 	_best_value = _label("0", 18, GameConfig.ACCENT_COLOR)
 	best_box.add_child(_best_value)
 
-	# Item slot under the score
+	# Item slot under the score, with a clear gap below the score pill and
+	# its shadow: pressed right up against it, the two read as one block.
 	var item_row := HBoxContainer.new()
-	item_row.position = Vector2(22, 74)
+	item_row.position = Vector2(22, ITEM_SLOT_TOP)
 	item_row.add_theme_constant_override("separation", 12)
 	_top_bar.add_child(item_row)
 
