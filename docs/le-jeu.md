@@ -31,6 +31,7 @@ endroit et sont faites pour être ajustées.
 - Le terrain fait **84 × 56 unités** pour un joueur, et grandit avec le
   monde : chaque joueur supplémentaire ajoute **la moitié de la surface
   standard** (103 × 69 à deux, 119 × 79 à trois…). La forme est conservée.
+  Les rivaux du solo comptent comme des joueurs.
 - Des **rochers** de tailles variées (rayon 0,85 à 2,6) sont dispersés :
   une poignée de base plus un pour 210 unités², soit une trentaine sur le
   terrain solo. Ils sont mortels.
@@ -129,6 +130,39 @@ n'importe quel corps**, le sien comme celui des autres. Les murs et les
 rochers restent solides, et son propre corps reste solide pour les autres :
 l'anneau ouvre un passage, il ne rend pas inoffensif.
 
+## Les rivaux
+
+Le solo ne se joue plus seul : des serpents pilotés par la machine
+partagent le terrain.
+
+- Leur nombre se règle dans le menu, bouton **RIVALS** : `NONE`, 1, 2, 3
+  (défaut) ou 4. Le choix est conservé. Avec `NONE`, on retrouve le solo
+  d'avant, sur le terrain standard et avec l'écran de fin `TIME`.
+- Ils s'appellent **VIPER**, **MAMBA**, **ADDER** et **KRAIT**, chacun avec
+  sa couleur — jamais le vert du joueur. Le bandeau les liste par leur nom
+  avec leur longueur, comme en multijoueur.
+- Ce sont des joueurs à part entière : ils comptent pour la taille du
+  terrain (à trois rivaux, c'est le terrain de quatre joueurs, 133 × 89),
+  subissent la gloutonnerie, meurent sur les mêmes obstacles, se
+  décomposent et réapparaissent. Ils peuvent tuer le joueur et se tuer
+  entre eux : **un rival mort est un festin**.
+- Ils conduisent comme le pilote automatique : ils visent la matière la
+  plus proche, font un détour pour un objet et évitent ce qui les tuerait.
+- Ils se servent de leurs objets : un éclair est déclenché après **1 à
+  3,5 secondes** d'attente (on voit l'éclair partir, puis l'accélération) ;
+  l'anneau fantôme est gardé pour le moment où un corps leur barre la
+  route.
+- Ils **régurgitent** : chacun se fixe une limite entre **45 et 85** unités
+  avalées ; au-delà, il recrache un dixième pour retrouver sa vivacité, au
+  plus une fois toutes les 4 secondes. Les plus gloutons deviennent les
+  plus grosses cibles.
+- À la fin de l'horloge, l'écran affiche **BIGGEST** si l'on est le plus
+  long, **OUTGROWN** sinon, avec la place obtenue (« you finished 2nd of
+  4 ») et le nom et la longueur du vainqueur. **R** relance une manche
+  contre les mêmes rivaux.
+- Les rivaux n'existent qu'en solo : une partie en réseau reste entre
+  humains.
+
 ## Le multijoueur
 
 - Un joueur **héberge**, les autres **rejoignent** en saisissant son adresse
@@ -147,14 +181,17 @@ l'anneau ouvre un passage, il ne rend pas inoffensif.
   rapprochée, et dessus. **V** bascule en vue plate, vue de dessus du terrain
   entier.
 - Le bandeau montre la longueur, l'horloge, la caméra courante, le meilleur
-  record, l'emplacement d'objet et, en multijoueur, la liste des joueurs avec
-  leur longueur.
+  record, l'emplacement d'objet et, en multijoueur ou contre des rivaux, la
+  liste des serpents avec leur longueur.
 - Un gain de longueur s'annonce en vert à côté du nombre, une perte en rouge.
 
 ## Le menu
 
-- **PLAY SOLO**, **MULTIPLAYER** (héberger / rejoindre avec saisie d'IP),
-  **GRAPHICS**, **QUIT**. Il se parcourt à la souris comme au clavier.
+- **PLAY SOLO**, **RIVALS** (nombre d'adversaires en solo, voir « Les
+  rivaux »), **MULTIPLAYER** (héberger / rejoindre avec saisie d'IP),
+  **GRAPHICS**, **QUIT**. Il se parcourt à la souris comme au clavier ; un
+  réglage qui défile garde la sélection, on peut donc l'appuyer plusieurs fois
+  de suite.
 - La page **GRAPHICS** règle :
   - la finesse du maillage du serpent : `SIMPLE`, `SMOOTH` (défaut), `FINE` ;
   - la **synchronisation verticale**, activée ou non ;

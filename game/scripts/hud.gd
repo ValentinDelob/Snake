@@ -10,6 +10,7 @@ signal quality_chosen(mode: int)
 signal vsync_toggled()
 signal fps_limit_cycled()
 signal debug_toggled()
+signal rivals_cycled()
 signal quit_requested()
 
 ## The interface: a slim top bar while playing, and a centred card for the
@@ -363,7 +364,9 @@ func set_players(rows: Array, local_id: int, spectating: bool) -> void:
 				0 if row["id"] == local_id else maxi(1, index)
 			)
 			# Peer ids are huge random numbers: nobody needs to read those.
-			var name_text: String = "you" if row["id"] == local_id else "player %d" % (index + 1)
+			var name_text: String = row.get("name", (
+				"you" if row["id"] == local_id else "player %d" % (index + 1)
+			))
 			label.text = "%s  %.1f%s" % [
 				name_text, row["length"], "" if row["alive"] else "  gone",
 			]
@@ -489,6 +492,8 @@ func _show_menu_page(page: MenuPage) -> void:
 			])
 			_set_buttons([
 				{"text": "PLAY SOLO", "primary": true, "action": solo_requested},
+				# Right under solo, since it is what solo will be played against.
+				{"text": "RIVALS  %s" % _rivals_label(), "action": func(): rivals_cycled.emit()},
 				{"text": "MULTIPLAYER", "action": func(): _show_menu_page(MenuPage.MULTIPLAYER)},
 				{"text": "GRAPHICS", "action": func(): _show_menu_page(MenuPage.GRAPHICS)},
 				{"text": "QUIT", "action": quit_requested},
@@ -560,6 +565,11 @@ func _show_menu_page(page: MenuPage) -> void:
 				[["ESC"], "back"],
 			])
 	_present()
+
+
+func _rivals_label() -> String:
+	var count := int(PlayerProfile.get_preference("rivals"))
+	return "NONE" if count <= 0 else str(count)
 
 
 func _submit_address() -> void:
@@ -703,7 +713,12 @@ func _build_address_field() -> LineEdit:
 func refresh_menu_page() -> void:
 	if _menu_items.is_empty():
 		return
+	# The selection stays on the entry that was just pressed, so a setting
+	# that cycles can be pressed again without walking back down to it.
+	_sync_menu_index()
+	var kept := _menu_index
 	_show_menu_page(_menu_page)
+	_select_menu_item(kept)
 
 
 ## Pre-fill the address box with whatever was used last. The menu remembers
@@ -747,7 +762,8 @@ func show_lobby(is_host: bool, players: int, addresses: String, dialling: String
 ## The end of a multiplayer round: one winner, everybody else watched.
 ## The clock ran out. Whoever grew the biggest snake takes the round.
 func show_result(
-	title: String, color: Color, subtitle: String, length: float, best: float, record: bool
+	title: String, color: Color, subtitle: String, length: float, best: float, record: bool,
+	again: String = "back to the lobby"
 ) -> void:
 	_title.text = title
 	_title.add_theme_color_override("font_color", color)
@@ -757,9 +773,10 @@ func show_result(
 		["YOUR LENGTH", "%.1f" % length, GameConfig.TEXT_COLOR],
 		["NEW BEST" if record else "BEST", "%.1f" % best, GameConfig.ACCENT_COLOR],
 	])
-	_set_call_to_action("ENTER", "back to the lobby")
+	var online := again == "back to the lobby"
+	_set_call_to_action("ENTER" if online else "R", again)
 	_set_hints([
-		[["M"], "leave the session"],
+		[["M"], "leave the session" if online else "menu"],
 		[["ESC"], "quit"],
 	])
 	_present()

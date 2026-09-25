@@ -83,15 +83,36 @@ mode compatibilité reste disponible en repli. Le plantage était intermittent
 et n'a jamais pu être reproduit à la demande : c'est une atténuation, pas une
 correction prouvée.
 
+## Les rivaux sont des joueurs, pas des obstacles
+
+Le solo manquait d'adversaire alors que le jeu savait faire tourner
+plusieurs serpents. Les rivaux sont donc de **vrais serpents du match** :
+mêmes règles, même gloutonnerie, même mort, même décomposition, et ils
+comptent pour la taille du terrain. Rejeté : des ennemis d'un autre genre
+avec leurs propres règles, qui auraient doublé le code des collisions et
+cassé l'économie de la matière.
+
+Leur conduite réutilise le pilote automatique de l'auto-test ; ce qui leur
+est propre (usage des objets, régurgitation) vit à part, dans le cerveau du
+rival, pour que le pilote reste le même pour les tests. Conséquence à
+connaître : **toute amélioration du pilote rend les rivaux plus forts**, et
+l'auto-test joue désormais contre eux.
+
+Ils sont limités à quatre, parce qu'il n'y a que quatre couleurs de
+serpent en plus de celle du joueur. Ils restent hors du multijoueur : une
+partie en réseau reste entre humains, et l'hôte n'aurait pas à simuler des
+joueurs que personne ne voit arriver.
+
 ## Points laissés ouverts
+
+- Les rivaux ont tous le même niveau et presque le même caractère. Des
+  personnalités (chasseur, prudent, glouton) ou une difficulté réglable sont
+  la suite naturelle.
 
 - Le jeu est **entièrement muet**. C'est, de loin, le plus gros manque
   identifié pour le plaisir de jeu.
 - Rien ne monte en tension à l'intérieur d'une manche : la minute 4 ressemble
   à la minute 1.
-- Il n'y a **aucun adversaire en solo**, alors que le jeu sait faire tourner
-  plusieurs serpents et qu'un pilote automatique existe déjà (il ne sert
-  qu'aux tests et à la démonstration).
 - Il reste de rares à-coups d'affichage, une image sur cinq mille environ,
   dont le temps ne passe pas dans le code du jeu ; ils n'ont pas été
   expliqués.

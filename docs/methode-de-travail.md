@@ -53,6 +53,7 @@ fermer la fenêtre proprement.
 | `--host` / `--join <ip>` | ouvre ou rejoint une session au démarrage |
 | `--round-seconds <n>` | raccourcit la manche (pratique pour les tests) |
 | `--start-score <n>` | démarre avec de la matière déjà avalée |
+| `--rivals <n>` | impose le nombre de rivaux en solo, quel que soit le menu |
 | `--profile` | mesure les images, sans synchronisation verticale |
 | `--profile-capped` | même mesure, dans les conditions réelles du joueur |
 
@@ -63,6 +64,13 @@ vraies touches, traverse tous les écrans, toutes les caméras, déclenche
 chaque objet, meurt, revient, et attend la fin de l'horloge. Il lit ensuite
 le journal pour s'assurer qu'aucune erreur moteur n'y est apparue, puis
 affiche une ligne de verdict qui résume tout ce qu'il a observé.
+
+Depuis l'arrivée des rivaux, il fait défiler le bouton `RIVALS` sur toutes
+ses valeurs avant de jouer, puis joue **contre trois rivaux** (le réglage
+par défaut) : un rival peut donc tuer le serpent de test ou lui voler un
+objet en pleine phase, et les phases savent recommencer pour cette raison.
+Les règles propres aux rivaux (tirer un éclair, régurgiter un dixième) sont
+vérifiées une fois les phases scriptées finies, pour ne pas les perturber.
 
 **Toute règle nouvelle doit être ajoutée à l'auto-test.** C'est ce qui a
 permis d'attraper, entre autres : un serpent qui réapparaissait face à un

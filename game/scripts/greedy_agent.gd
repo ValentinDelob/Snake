@@ -97,6 +97,19 @@ func _avoid(world: SnakeWorld) -> float:
 	return 0.0
 
 
+## True when another snake's body lies straight ahead, close enough that
+## the ghost ring would be the way through rather than a way round.
+func body_ahead(game_match: SnakeMatch, world: SnakeWorld) -> bool:
+	var reach: float = LOOK_AHEAD * world.speed_multiplier
+	for index in range(1, 5):
+		var point: Vector2 = world.head_position + world.direction() * (reach * index / 4.0)
+		for id: int in game_match.snakes:
+			var other: SnakeWorld = game_match.snakes[id]
+			if other != world and other.alive and other.hits_body(point, 0.0):
+				return true
+	return false
+
+
 func _blocked(world: SnakeWorld, angle_offset: float, distance: float) -> bool:
 	var direction := Vector2(
 		cos(world.heading + angle_offset), sin(world.heading + angle_offset)

@@ -210,6 +210,22 @@ const TAIL_TAPER := 0.45          # thickness left just before the tail tip
 const ROUND_SECONDS := 300.0
 const RESPAWN_DELAY := 2.0
 
+## Rivals: snakes the machine drives, so a solo round has somebody to be
+## bigger than. Each one is a full player - it takes floor, eats, dies and
+## drops its matter like anyone else. There are only as many as there are
+## palettes left once yours is taken, so no rival ever wears your colours.
+const RIVAL_NAMES := ["VIPER", "MAMBA", "ADDER", "KRAIT"]
+const RIVALS_DEFAULT := 3
+## How long a rival sits on a speed bolt before firing it, in seconds. A
+## little patience makes them readable: you see the bolt go, then the burst.
+const RIVAL_BOOST_PATIENCE := Vector2(1.0, 3.5)
+## A rival brings matter up once it has swallowed this much, to get its
+## speed back. Each one draws its own limit, so they do not all slim down
+## at the same moment - and the greedy ones make juicy targets.
+const RIVAL_SPIT_AT := Vector2(45.0, 85.0)
+## And waits at least this long between two helpings.
+const RIVAL_SPIT_COOLDOWN := 4.0
+
 ## The simulation runs at a fixed rate so it behaves the same on any machine.
 const SIM_HZ := 120.0
 const SIM_STEP := 1.0 / SIM_HZ

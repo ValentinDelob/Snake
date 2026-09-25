@@ -45,6 +45,8 @@ var game_match: SnakeMatch
 var state: State = State.MENU
 var agent: GreedyAgent = null
 var spectating := false
+## The snakes the machine plays in a solo round, by snake id.
+var rivals: Dictionary = {}
 
 var stats := {
 	"frames": 0,
@@ -112,6 +114,7 @@ func _ready() -> void:
 	_hud.vsync_toggled.connect(_toggle_vsync)
 	_hud.fps_limit_cycled.connect(_cycle_fps_limit)
 	_hud.debug_toggled.connect(_toggle_debug)
+	_hud.rivals_cycled.connect(_cycle_rivals)
 	_hud.quit_requested.connect(func(): request_quit("menu-quit"))
 
 	Session.peer_joined.connect(_on_peer_joined)
@@ -160,6 +163,8 @@ func _parse_arguments() -> void:
 				_round_seconds = float(value)
 			"--start-score":
 				_start_score = int(value)
+			"--rivals":
+				_rivals_override = int(value)
 			"--profile":
 				_profiler = FrameProfiler.new()
 				# Vsync pins every frame to 16.7 ms and hides what each part
@@ -191,6 +196,8 @@ var _pending_expect_timeout := false
 ## Measuring aid: a round that starts with points already on the board is a
 ## round with a long snake, which is when the game works hardest.
 var _start_score := 0
+## --rivals: how many rivals a solo round gets, whatever the menu says.
+var _rivals_override := -1
 ## Shorter rounds for a test or a tuning session; zero keeps the real one.
 var _round_seconds := 0.0
 ## True while a profiling run is driving the display itself.
@@ -316,6 +323,8 @@ func _refresh_hud() -> void:
 func _player_name(id: int) -> String:
 	if id == Session.local_id():
 		return "you"
+	if rivals.has(id):
+		return rivals[id].name
 	var ids: Array = game_match.snakes.keys()
 	ids.sort()
 	var index := ids.find(id)
@@ -329,7 +338,8 @@ func _scoreboard() -> Array:
 	for id: int in ids:
 		var snake: SnakeWorld = game_match.snakes[id]
 		rows.append({
-			"id": id, "length": snake.target_body_length, "alive": snake.alive,
+			"id": id, "name": _player_name(id),
+			"length": snake.target_body_length, "alive": snake.alive,
 		})
 	return rows
 
@@ -344,6 +354,10 @@ func _advance() -> void:
 			mine.steer(_turn_from_keys())
 		if Session.role == Session.Role.CLIENT:
 			_send_input.rpc_id(1, mine.turn_input)
+	for id: int in rivals:
+		var rival = game_match.snakes.get(id)
+		if rival != null:
+			rivals[id].think(game_match, rival, GameConfig.SIM_STEP)
 
 	game_match.step(GameConfig.SIM_STEP)
 	stats["steps"] += 1
@@ -427,7 +441,7 @@ func _on_item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 				told = "opened a crate: speed boost, stored in the slot"
 	var snake: SnakeWorld = game_match.snakes[id]
 	_board.play_pickup_flash(snake.head_position, _elapsed, color)
-	Journal.info("game", "Player %d %s" % [id, told])
+	Journal.info("game", "%s %s" % [_player_name(id), told])
 
 
 func _on_match_finished(winner: int) -> void:
@@ -461,11 +475,49 @@ func _show_result(winner: int) -> void:
 		_hud.show_result(
 			title, color, subtitle, length, PlayerProfile.best_length(), record
 		)
+	elif not rivals.is_empty():
+		_show_rival_result(winner, length, record)
 	else:
 		_hud.show_game_over(
 			"the longest snake you grew",
 			length, PlayerProfile.best_length(), record
 		)
+
+
+## A solo round against rivals ends like a match: somebody was biggest,
+## and where you finished among them is the headline.
+func _show_rival_result(winner: int, length: float, record: bool) -> void:
+	var standings := _scoreboard()
+	standings.sort_custom(func(a, b): return a["length"] > b["length"])
+	var place := 1
+	for index in range(standings.size()):
+		if standings[index]["id"] == Session.local_id():
+			place = index + 1
+	var mine := winner == Session.local_id()
+	var subtitle := "you finished %s of %d" % [_ordinal(place), standings.size()]
+	if not mine and winner > 0:
+		subtitle += "  -  %s grew to %.1f" % [
+			_player_name(winner), game_match.snakes[winner].target_body_length,
+		]
+	Journal.info("game", "Round against rivals: %s won, you finished %s of %d" % [
+		_player_name(winner), _ordinal(place), standings.size(),
+	])
+	_hud.show_result(
+		"BIGGEST" if mine else "OUTGROWN",
+		GameConfig.SNAKE_HEAD_COLOR if mine else GameConfig.DANGER_COLOR,
+		subtitle, length, PlayerProfile.best_length(), record, "play again"
+	)
+
+
+static func _ordinal(place: int) -> String:
+	match place:
+		1:
+			return "1st"
+		2:
+			return "2nd"
+		3:
+			return "3rd"
+	return "%dth" % place
 
 
 func _start_spectating(from: Vector2) -> void:
@@ -479,6 +531,7 @@ func _start_spectating(from: Vector2) -> void:
 # Networking
 # --------------------------------------------------------------------------- #
 func _start_hosting() -> void:
+	rivals.clear()
 	if not Session.host():
 		_hud.show_menu(PlayerProfile.best_length(), PlayerProfile.games_played(), Session.last_error)
 		return
@@ -758,6 +811,7 @@ func _enter_menu(message: String = "") -> void:
 	_last_menu_message = message
 	Session.leave()
 	game_match.snakes.clear()
+	rivals.clear()
 	game_match.authoritative = true
 	_set_state(State.MENU)
 	spectating = false
@@ -788,12 +842,39 @@ func _refresh_lobby() -> void:
 	)
 
 
-## Solo: one snake, the rules unchanged.
+## Solo: your snake, and as many rivals as the menu asks for. They are
+## full players, so the arena is cut for all of them.
 func _start_solo() -> void:
 	game_match.snakes.clear()
+	rivals.clear()
 	game_match.authoritative = true
 	game_match.add_snake(Session.local_id())
+	for index in range(rival_count()):
+		var id := Session.local_id() + 1 + index
+		game_match.add_snake(id)
+		rivals[id] = RivalBrain.new(id, GameConfig.RIVAL_NAMES[index], _seed)
 	_begin_round(game_match.snakes.keys(), false)
+	if not rivals.is_empty():
+		var names: Array = []
+		for id: int in rivals:
+			names.append(rivals[id].name)
+		Journal.info("game", "Rivals on the field: %s" % ", ".join(names))
+
+
+## How many rivals a solo round gets: the menu's choice, unless the command
+## line said otherwise.
+func rival_count() -> int:
+	var wanted := _rivals_override
+	if wanted < 0:
+		wanted = int(PlayerProfile.get_preference("rivals"))
+	return clampi(wanted, 0, GameConfig.RIVAL_NAMES.size())
+
+
+func _cycle_rivals() -> void:
+	var next := (rival_count() + 1) % (GameConfig.RIVAL_NAMES.size() + 1)
+	PlayerProfile.set_preference("rivals", next)
+	Journal.info("game", "Rivals: %d" % next)
+	_hud.refresh_menu_page()
 
 
 func _toggle_pause() -> void:

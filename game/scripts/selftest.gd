@@ -123,6 +123,27 @@ var motes_big := 0
 
 ## the arena the round was played on
 var arena_seen := Vector2.ZERO
+
+## rivals: how many the menu offered, how many took the field, and whether
+## they played like players - moving, eating, firing, slimming down
+var rival_counts_offered := {}
+var rivals_expected := -1
+var rivals_seen := 0
+var rivals_moved := {}
+var rivals_grew := {}
+var rivals_named := false
+var rival_boost_rule := false
+var rival_spit_rule := false
+var rival_spit_share := 0.0
+var rival_result_title := ""
+var _rival_starts := {}
+var _rival_stage := 0
+var _rival_id := -1
+var _rival_mark := 0
+var _rival_score := 0.0
+var _rival_since := 0.0
+var _menu_step := 0
+var _menu_step_at := 0
 ## debug readout: the frame rate it showed, and whether it went away again
 var debug_fps_shown := 0
 var debug_hidden := false
@@ -338,12 +359,34 @@ func _watch_remotes(game) -> void:
 # The solo script
 # --------------------------------------------------------------------------- #
 func _on_menu(game) -> void:
-	arena_seen = Vector2(game.game_match.width, game.game_match.height)
-	if not _entered_play and game.stats["frames"] > 30:
+	if _entered_play or game.stats["frames"] <= 30:
+		return
+	# Walk down to RIVALS and press it round every count it offers, back to
+	# where it started, the way a player would with the keyboard. One key a
+	# few frames apart: an injected key is only read on the next frame.
+	var frames: int = game.stats["frames"]
+	if frames - _menu_step_at < 6:
+		return
+	_menu_step_at = frames
+	var cycle := GameConfig.RIVAL_NAMES.size() + 1
+	if _menu_step == 0:
+		press(KEY_DOWN)
+		release(KEY_DOWN)
+	elif _menu_step <= cycle:
+		rival_counts_offered[game.rival_count()] = true
+		press(KEY_ENTER)
+		release(KEY_ENTER)
+	elif _menu_step == cycle + 1:
+		rival_counts_offered[game.rival_count()] = true
+		Journal.info("selftest", "rival counts offered by the menu: %s" % str(rival_counts_offered.keys()))
+		press(KEY_UP)
+		release(KEY_UP)
+	else:
 		Journal.info("selftest", "starting a game from the menu")
 		_entered_play = true
 		press(KEY_ENTER)
 		release(KEY_ENTER)
+	_menu_step += 1
 
 
 ## What everything on the floor is worth between it all.
@@ -397,9 +440,11 @@ func _on_play(game) -> void:
 		Journal.info("selftest", "snake came back after dying")
 	_was_alive = alive
 	if now < 1.0:
+		arena_seen = Vector2(game.game_match.width, game.game_match.height)
 		_survey_rocks(game)
 		_survey_field(game)
 	_watch_world(game, now)
+	_watch_rivals(game, now)
 
 	match phase:
 		Phase.CAMERAS:
@@ -1016,6 +1061,108 @@ func _watch_world(game, now: float) -> void:
 		_length_errors += 1
 
 
+## Rivals are watched all round long: they have to leave their spawn, eat,
+## and be listed on the bar under their own names.
+func _watch_rivals(game, now: float) -> void:
+	var rivals: Dictionary = game.rivals
+	if rivals_expected < 0:
+		rivals_expected = game.rival_count()
+		rivals_seen = rivals.size()
+		Journal.info("selftest", "%d rival(s) on the field, %d expected" % [rivals_seen, rivals_expected])
+	for id: int in rivals:
+		var snake = game.game_match.snakes.get(id)
+		if snake == null or not snake.alive:
+			continue
+		if not _rival_starts.has(id):
+			_rival_starts[id] = snake.head_position
+		if not rivals_moved.has(id) and snake.head_position.distance_to(_rival_starts[id]) > 5.0:
+			rivals_moved[id] = true
+		if not rivals_grew.has(id) and snake.score > 0.0:
+			rivals_grew[id] = true
+			Journal.info("selftest", "%s ate something" % rivals[id].name)
+	if not rivals_named and not rivals.is_empty():
+		rivals_named = _bar_lists_rivals(game)
+	# The rules rivals play by are checked once the scripted phases are
+	# over, so nothing done to a rival here can disturb them.
+	if phase == Phase.WAIT and not rivals.is_empty():
+		_check_rival_rules(game, now)
+
+
+func _bar_lists_rivals(game) -> bool:
+	var box: Control = game.hud()._players_box
+	if not box.visible:
+		return false
+	var text := ""
+	for label in box.get_children():
+		text += (label as Label).text + "\n"
+	for id: int in game.rivals:
+		if not text.contains(game.rivals[id].name):
+			return false
+	Journal.info("selftest", "the bar lists the rivals: %s" % text.replace("\n", " | "))
+	return true
+
+
+## Hand a rival a bolt and check it fires it; then stuff it past its limit
+## and check it brings a tenth up. Driving a bot into either situation would
+## be left to chance, so the situation is set up and the rival judged on it.
+func _check_rival_rules(game, now: float) -> void:
+	var rival = game.game_match.snakes.get(_rival_id)
+	var brain = game.rivals.get(_rival_id)
+	if _rival_stage in [1, 2] and (rival == null or not rival.alive):
+		Journal.info("selftest", "the rival under test died: trying another")
+		_rival_stage = 0
+		_rival_score = 0.0
+	match _rival_stage:
+		0:
+			for id: int in game.rivals:
+				var candidate = game.game_match.snakes.get(id)
+				if candidate != null and candidate.alive and candidate.effect == SnakeWorld.Item.NONE:
+					_rival_id = id
+					break
+			rival = game.game_match.snakes.get(_rival_id)
+			if rival == null or not rival.alive:
+				return
+			brain = game.rivals[_rival_id]
+			if not rival_boost_rule:
+				rival.carried = SnakeWorld.Item.SPEED
+				_rival_mark = brain.boosts_fired
+				_rival_since = now
+				_rival_stage = 1
+				Journal.info("selftest", "%s handed a speed bolt" % brain.name)
+			elif not rival_spit_rule:
+				_rival_stage = 2
+		1:
+			if brain.boosts_fired > _rival_mark and rival.effect == SnakeWorld.Item.SPEED:
+				rival_boost_rule = true
+				Journal.info("selftest", "%s fired it after %.1fs" % [brain.name, now - _rival_since])
+				_rival_stage = 0
+			elif now - _rival_since > GameConfig.RIVAL_BOOST_PATIENCE.y + GameConfig.BOOST_DURATION + 2.0:
+				Journal.warn("selftest", "%s sat on its bolt" % brain.name)
+				_rival_stage = 0
+		2:
+			# Fed one frame, judged on a later one: the brain acts on the
+			# next simulation step, not on this frame.
+			if _rival_score <= 0.0:
+				rival.add_score(brain.spit_threshold() + 5.0 - rival.score)
+				_rival_score = rival.score
+				_rival_mark = brain.spits
+				_rival_since = now
+				Journal.info("selftest", "%s fed up to %.1f (limit %.1f)" % [
+					brain.name, rival.score, brain.spit_threshold(),
+				])
+			elif brain.spits > _rival_mark:
+				rival_spit_share = 1.0 - rival.score / _rival_score
+				rival_spit_rule = true
+				_rival_stage = 3
+				Journal.info("selftest", "%s brought up %.0f%% of its matter" % [
+					brain.name, rival_spit_share * 100.0,
+				])
+			elif now - _rival_since > GameConfig.RIVAL_SPIT_COOLDOWN + 1.0:
+				Journal.warn("selftest", "%s never slimmed down" % brain.name)
+				_rival_score = 0.0
+				_rival_stage = 0
+
+
 ## A spot a few units in front of the snake: whatever is put there will be
 ## driven over within a second or two.
 func _ahead_of(snake) -> Vector2:
@@ -1076,7 +1223,11 @@ func _on_gameover(game) -> void:
 	if _finished:
 		return
 	round_ended = true
+	rival_result_title = game.hud()._title.text
 	Journal.info("selftest", "clock ran out, longest snake was %.1f units" % _longest_length(game))
+	Journal.info("selftest", "result screen: %s / %s" % [
+		rival_result_title, game.hud()._subtitle.text,
+	])
 	_finished = true
 	press(KEY_ESCAPE)
 
@@ -1102,7 +1253,7 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) rivals(%d/%d, offered=%d, moved=%d, ate=%d, named=%s, boost=%s, spit=%.0f%%, result=%s) arena=%.0fx%.0f games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
@@ -1115,6 +1266,9 @@ func summary(game) -> String:
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
+		rivals_seen, rivals_expected, rival_counts_offered.size(), rivals_moved.size(),
+		rivals_grew.size(), rivals_named, rival_boost_rule, rival_spit_share * 100.0,
+		rival_result_title, arena_seen.x, arena_seen.y,
 		stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 	]
 
@@ -1240,11 +1394,14 @@ func _verify_solo(stats: Dictionary) -> Array:
 		if not (simple < smooth and smooth < fine):
 			failures.append("graphics modes did not order themselves: %s" % str(quality_faces))
 
-	if arena_seen.distance_to(GameConfig.arena_for(1)) > 0.1:
-		failures.append("solo arena was %.0fx%.0f, expected the standard one" % [
+	failures.append_array(_verify_rivals())
+	var field := 1 + maxi(0, rivals_expected)
+	if arena_seen.distance_to(GameConfig.arena_for(field)) > 0.1:
+		failures.append("solo arena was %.0fx%.0f, expected %.0fx%.0f for %d snakes" % [
 			arena_seen.x, arena_seen.y,
+			GameConfig.arena_for(field).x, GameConfig.arena_for(field).y, field,
 		])
-	if rocks_seen < SnakeMatch.minimum_rocks(1):
+	if rocks_seen < SnakeMatch.minimum_rocks(field):
 		failures.append("only %d rock(s) on the arena" % rocks_seen)
 	elif rock_largest - rock_smallest < 0.5:
 		failures.append("every rock was the same size (r%.1f-%.1f)" % [
@@ -1327,6 +1484,35 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the bot never scored a point")
 	elif not _growth_observed:
 		failures.append("the body jumped to its new length instead of growing into it")
+	return failures
+
+
+func _verify_rivals() -> Array:
+	var failures: Array = []
+	for count in range(GameConfig.RIVAL_NAMES.size() + 1):
+		if not rival_counts_offered.has(count):
+			failures.append("the menu never offered %d rival(s)" % count)
+	if rivals_expected <= 0:
+		failures.append("the round was played without rivals (expected %d)" % rivals_expected)
+		return failures
+	if rivals_seen != rivals_expected:
+		failures.append("%d rival(s) took the field, %d were asked for" % [rivals_seen, rivals_expected])
+	if rivals_moved.size() < rivals_seen:
+		failures.append("only %d of %d rivals ever left their spawn" % [rivals_moved.size(), rivals_seen])
+	if rivals_grew.is_empty():
+		failures.append("no rival ever ate anything")
+	if not rivals_named:
+		failures.append("the bar never listed the rivals by name")
+	if not rival_boost_rule:
+		failures.append("a rival handed a speed bolt never fired it")
+	if not rival_spit_rule:
+		failures.append("a rival over its limit never brought matter up")
+	elif absf(rival_spit_share - GameConfig.SPIT_SHARE) > 0.04:
+		failures.append("a rival brought up %.0f%% of its matter, not %.0f%%" % [
+			rival_spit_share * 100.0, GameConfig.SPIT_SHARE * 100.0,
+		])
+	if not rival_result_title in ["BIGGEST", "OUTGROWN"]:
+		failures.append("the round against rivals ended on '%s', not a ranking" % rival_result_title)
 	return failures
 
 

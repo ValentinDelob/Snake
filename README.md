@@ -7,7 +7,8 @@ It started life as a pygame prototype, kept working in `legacy/python`.
 The game has drifted a long way from the original Snake: there is no grid,
 dying does not end anything, and the score is not a tally of points but the
 length of the snake itself. Eat, and you grow wide, slow and hard to turn.
-After five minutes, the biggest snake takes the round.
+After five minutes, the biggest snake takes the round - against friends over
+the network, or alone against up to four rivals the machine drives.
 
 > **The rules, the working method and the decisions already taken live in
 > [`docs/`](docs/).** Start there before changing anything.
@@ -36,7 +37,8 @@ game/                      the Godot project (open this folder in Godot)
     ui/item_slot.gd        the item slot: bolt, ring and countdown
     journal.gd             autoload: structured logging
     profile_store.gd       autoload: best length and preferences
-    greedy_agent.gd        bot used by the self-test and the demo
+    greedy_agent.gd        bot used by the self-test, the demo and the rivals
+    rival_brain.gd         a solo rival: steering, items, bringing matter up
     selftest.gd            scripted end-to-end driver
     frame_profiler.gd      where a frame goes, and how bad the worst ones are
     game_config.gd         every tunable number, and the palette

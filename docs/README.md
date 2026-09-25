@@ -23,7 +23,8 @@ on ne le dirige qu'en le faisant tourner à gauche ou à droite. Il ramasse de
 la matière lumineuse éparpillée au sol : **plus il en avale, plus il est long,
 large, lent et difficile à manœuvrer**. Au bout de cinq minutes, le plus gros
 serpent gagne — mourir ne met personne dehors, cela coûte seulement tout ce
-qu'on avait avalé, qui retombe par terre pour les autres.
+qu'on avait avalé, qui retombe par terre pour les autres. En solo, jusqu'à
+quatre rivaux pilotés par la machine disputent le terrain.
 
 Le jeu s'appelle « Snake 3D » mais il a beaucoup dérivé du Snake d'origine :
 il n'y a plus de grille, plus de mort définitive, et le score n'est plus un

@@ -18,6 +18,7 @@ const DEFAULTS := {
 	"vsync": true,
 	"fps_limit": 0,
 	"debug": false,
+	"rivals": GameConfig.RIVALS_DEFAULT,
 }
 
 var data: Dictionary = DEFAULTS.duplicate()
