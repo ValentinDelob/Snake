@@ -7,8 +7,11 @@ extends RefCounted
 ## The board is a continuous rectangle, not a grid: positions are floats,
 ## X grows right and Y (of the 2D simulation) maps to Z in the 3D world.
 
-const BOARD_WIDTH := 30.0
-const BOARD_HEIGHT := 20.0
+## A wide field rather than a room: there is matter scattered all over it
+## and several snakes grazing, so everyone needs somewhere to be that is
+## not on top of somebody else.
+const BOARD_WIDTH := 84.0
+const BOARD_HEIGHT := 56.0
 
 ## The arena grows with the crowd. Two players get half as much floor again
 ## as one, three get twice, and so on - room enough that a second snake is
@@ -35,6 +38,10 @@ const GROWTH_SPEED := 2.2         # world units per second
 const SELF_COLLISION_SKIP := 1.5
 
 const FOOD_RADIUS := 0.4
+## How much matter lies about: one pellet per this many square units, so a
+## bigger arena is not a barer one.
+const FOOD_PER_AREA := 70.0
+const FOOD_MIN := 12
 
 ## Speed boost: a lightning bolt lying on the arena, kept in the item slot
 ## until the player fires it with space.
@@ -143,6 +150,8 @@ const SLOW_FRAME_SECONDS := 0.15
 ## Rocks scattered over the arena. They are never placed on a spawn point
 ## nor in the lane a snake sets off along, so nobody starts a round already
 ## boxed in; everywhere else they are fair game and come in several sizes.
+## Rocks are counted per square unit as well, for the same reason.
+const OBSTACLE_PER_AREA := 210.0
 const OBSTACLE_COUNT := Vector2i(5, 8)
 const OBSTACLE_RADIUS := Vector2(0.85, 2.6)
 const OBSTACLE_GAP := 3.0            # room left between two rocks

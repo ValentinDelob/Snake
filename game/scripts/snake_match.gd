@@ -16,7 +16,10 @@ var width: float
 var height: float
 
 var snakes: Dictionary = {}          # id -> SnakeWorld
-var food := Vector2.ZERO
+## Every pellet of matter lying on the floor. Eating one takes it out of
+## the field and another is sown somewhere else, so the field never runs
+## dry and never fills up.
+var food := PackedVector2Array()
 var ground: Array = []               # [{ "kind": Ground, "position": Vector2 }]
 
 ## Rocks: solid, round, of varying size. They are generated once per round
@@ -110,7 +113,7 @@ func start() -> void:
 		snakes[ids[index]].reset(spot[0], spot[1])
 
 	_build_obstacles()
-	food = free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0)
+	_sow_field()
 	running = true
 
 
@@ -130,6 +133,24 @@ func _spawn_pose(index: int, count: int) -> Array:
 # --------------------------------------------------------------------------- #
 # Rocks
 # --------------------------------------------------------------------------- #
+## How many pellets this arena should hold.
+func field_size() -> int:
+	return maxi(GameConfig.FOOD_MIN, int(width * height / GameConfig.FOOD_PER_AREA))
+
+
+## Fill the field from scratch at the start of a round.
+func _sow_field() -> void:
+	food.resize(0)
+	for _index in range(field_size()):
+		food.append(free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0))
+
+
+## Drop one pellet somewhere sensible. Used when one is eaten, so the
+## amount of matter on the floor stays where the arena wants it.
+func sow_one() -> void:
+	food.append(free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0))
+
+
 ## Scatter rocks of assorted sizes. Everything a snake needs at the start of
 ## a round - its spawn point and the lane it sets off along - is kept clear,
 ## and two rocks never sit closer than a snake is wide, so the arena always
@@ -138,7 +159,11 @@ func _build_obstacles() -> void:
 	obstacles = []
 	lane_length = GameConfig.OBSTACLE_LANE_LENGTH
 	_gap = GameConfig.OBSTACLE_GAP
-	var wanted := _rng.randi_range(GameConfig.OBSTACLE_COUNT.x, GameConfig.OBSTACLE_COUNT.y)
+	# A field twice as wide needs more than the same handful of rocks.
+	var spread := width * height / GameConfig.OBSTACLE_PER_AREA
+	var wanted := _rng.randi_range(
+		GameConfig.OBSTACLE_COUNT.x, GameConfig.OBSTACLE_COUNT.y
+	) + int(spread)
 	var attempts := 0
 	while obstacles.size() < wanted and attempts < 900:
 		attempts += 1
@@ -349,11 +374,16 @@ func _check_bite(id: int, snake: SnakeWorld) -> void:
 
 
 func _check_food(id: int, snake: SnakeWorld) -> void:
-	if snake.head_position.distance_to(food) >= GameConfig.SNAKE_RADIUS + GameConfig.FOOD_RADIUS:
+	var reach: float = GameConfig.SNAKE_RADIUS + GameConfig.FOOD_RADIUS
+	var reach_squared := reach * reach
+	for index in range(food.size() - 1, -1, -1):
+		if snake.head_position.distance_squared_to(food[index]) >= reach_squared:
+			continue
+		food.remove_at(index)
+		snake.add_score(1)
+		sow_one()
+		food_eaten.emit(id)
 		return
-	snake.add_score(1)
-	food = free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0)
-	food_eaten.emit(id)
 
 
 func _check_ground(id: int, snake: SnakeWorld) -> void:
@@ -503,8 +533,11 @@ func free_spot(margin: float, clearance: float) -> Vector2:
 			if snake.hits_body(candidate, 0.0):
 				clear = false
 				break
-		if clear and candidate.distance_to(food) < 2.0:
-			clear = false
+		if clear:
+			for pellet: Vector2 in food:
+				if candidate.distance_to(pellet) < 1.6:
+					clear = false
+					break
 		if clear:
 			for item: Dictionary in ground:
 				if candidate.distance_to(item["position"]) < 2.5:

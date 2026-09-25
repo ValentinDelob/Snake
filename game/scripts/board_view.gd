@@ -24,7 +24,8 @@ var _ghost_material: StandardMaterial3D
 var _crate: MeshInstance3D
 var _crate_lamp: OmniLight3D
 var _crate_material: StandardMaterial3D
-var _food: MeshInstance3D
+var _field: MultiMeshInstance3D
+var _field_mesh: MultiMesh
 var _flash_ring: MeshInstance3D
 var _flash_material: StandardMaterial3D
 var _flash_time := -1.0
@@ -173,10 +174,7 @@ func _refresh_lighting(local, game_match: SnakeMatch) -> void:
 
 
 func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
-	_food.position = Vector3(
-		game_match.food.x, 0.5 + 0.08 * sin(elapsed * 4.0), game_match.food.y
-	)
-	_food.rotation.y = elapsed * 1.6
+	_place_field(game_match.food, elapsed)
 
 	var has_bolt := game_match.has_ground(SnakeWorld.Ground.BOLT)
 	_bolt.visible = has_bolt
@@ -231,6 +229,19 @@ func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 		_crate_lamp.position = _crate.position
 		_crate_lamp.light_color = color
 		_crate_lamp.light_energy = 0.8 + 0.3 * sin(elapsed * 2.4)
+
+
+## Every pellet on the floor, bobbing and turning together.
+func _place_field(field: PackedVector2Array, elapsed: float) -> void:
+	if _field_mesh.instance_count != field.size():
+		_field_mesh.instance_count = field.size()
+	var lift := 0.5 + 0.08 * sin(elapsed * 4.0)
+	var basis := Basis(Vector3.UP, elapsed * 1.6)
+	for index in range(field.size()):
+		var pellet: Vector2 = field[index]
+		_field_mesh.set_instance_transform(
+			index, Transform3D(basis, Vector3(pellet.x, lift, pellet.y))
+		)
 
 
 ## Small, quick ring where something was collected.
@@ -380,11 +391,18 @@ func _build_props() -> void:
 	food_material.emission = GameConfig.FOOD_COLOR
 	food_material.emission_energy_multiplier = 0.22
 
-	_food = MeshInstance3D.new()
-	_food.name = "Food"
-	_food.mesh = food_mesh
-	_food.material_override = food_material
-	add_child(_food)
+	# Dozens of pellets lie about at once, so they are drawn as one batch
+	# rather than as one node each.
+	_field_mesh = MultiMesh.new()
+	_field_mesh.transform_format = MultiMesh.TRANSFORM_3D
+	_field_mesh.mesh = food_mesh
+	_field_mesh.instance_count = 0
+
+	_field = MultiMeshInstance3D.new()
+	_field.name = "Field"
+	_field.multimesh = _field_mesh
+	_field.material_override = food_material
+	add_child(_field)
 
 	_crate_material = StandardMaterial3D.new()
 	_crate_material.albedo_color = GameConfig.MYSTERY_COLOR

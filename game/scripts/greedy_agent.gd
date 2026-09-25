@@ -39,8 +39,8 @@ func _target(world: SnakeWorld) -> Vector2:
 	if _match == null:
 		return world.head_position + world.direction() * 10.0
 
-	var best: Vector2 = _match.food
-	var best_distance: float = world.head_position.distance_to(_match.food) * 1.6
+	var best: Vector2 = _nearest_pellet(world)
+	var best_distance: float = world.head_position.distance_to(best) * 1.6
 
 	if world.carried == SnakeWorld.Item.NONE and _match.has_ground(SnakeWorld.Ground.BOLT):
 		var bolt: Vector2 = _match.ground_position(SnakeWorld.Ground.BOLT)
@@ -55,6 +55,19 @@ func _target(world: SnakeWorld) -> Vector2:
 		if distance < best_distance:
 			best = crate
 
+	return best
+
+
+## The field holds dozens of pellets now, so the bot heads for whichever
+## one is closest rather than for the one and only fruit.
+func _nearest_pellet(world: SnakeWorld) -> Vector2:
+	var best := world.head_position + world.direction() * 10.0
+	var best_distance := INF
+	for pellet: Vector2 in _match.food:
+		var distance := world.head_position.distance_squared_to(pellet)
+		if distance < best_distance:
+			best_distance = distance
+			best = pellet
 	return best
 
 

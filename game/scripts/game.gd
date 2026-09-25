@@ -629,7 +629,7 @@ func _broadcast_snapshot(delta: float) -> void:
 
 
 @rpc("authority", "call_remote", "unreliable")
-func _apply_snapshot(snakes: Dictionary, food: Vector2, ground: Array) -> void:
+func _apply_snapshot(snakes: Dictionary, food: PackedVector2Array, ground: Array) -> void:
 	game_match.food = food
 	game_match.ground = []
 	for entry: Array in ground:
