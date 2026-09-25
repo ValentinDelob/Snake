@@ -68,6 +68,14 @@ func _target(world: SnakeWorld) -> Vector2:
 			best = bolt
 			best_distance = distance
 
+	# A magnet is worth the same small detour as a bolt.
+	if world.carried == SnakeWorld.Item.NONE and _match.has_ground(SnakeWorld.Ground.MAGNET):
+		var magnet: Vector2 = _match.ground_position(SnakeWorld.Ground.MAGNET)
+		var distance: float = world.head_position.distance_to(magnet)
+		if distance < best_distance:
+			best = magnet
+			best_distance = distance
+
 	if _match.has_ground(SnakeWorld.Ground.MYSTERY):
 		var crate: Vector2 = _match.ground_position(SnakeWorld.Ground.MYSTERY)
 		var distance: float = world.head_position.distance_to(crate)

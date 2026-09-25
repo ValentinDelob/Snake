@@ -15,6 +15,7 @@ const SMALL_POOL := 12
 const BIG_POOL := 5
 const RING_POOL := 5
 const RING_LIFE := 0.7
+const FIELD_RINGS := 3
 const HALO_SHADER := "res://shaders/soft_halo.gdshader"
 
 var _small: Array[GPUParticles3D] = []
@@ -24,6 +25,7 @@ var _next_big := 0
 var _rings: Array[Dictionary] = []   # { "mesh", "material", "age", "size" }
 var _next_ring := 0
 var _trails: Dictionary = {}          # snake id -> GPUParticles3D
+var _fields: Dictionary = {}          # snake id -> [MeshInstance3D] magnet rings
 var _pollen: GPUParticles3D
 var _spark_mesh: QuadMesh
 var _ring_mesh: PlaneMesh
@@ -144,6 +146,47 @@ func drop_trail(id: int) -> void:
 	if _trails.has(id):
 		_trails[id].queue_free()
 		_trails.erase(id)
+	if _fields.has(id):
+		for ring: MeshInstance3D in _fields[id]:
+			ring.queue_free()
+		_fields.erase(id)
+
+
+## The magnet's field: rings of light on the sand, shrinking in towards the
+## head over and over, so the pull reads even before a single gem moves.
+## `strength` 0 hides it.
+func magnet_field(id: int, at: Vector2, strength: float, elapsed: float) -> void:
+	var rings: Array = _fields.get(id, [])
+	if rings.is_empty():
+		if strength <= 0.0:
+			return
+		var shader: Shader = load(HALO_SHADER)
+		for _index in range(FIELD_RINGS):
+			var material := ShaderMaterial.new()
+			material.shader = shader
+			material.set_shader_parameter("hollow", 1.0)
+			material.set_shader_parameter("color", GameConfig.MAGNET_COLOR)
+			var ring := MeshInstance3D.new()
+			ring.mesh = _ring_mesh
+			ring.material_override = material
+			ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(ring)
+			rings.append(ring)
+		_fields[id] = rings
+	for index in range(rings.size()):
+		var ring: MeshInstance3D = rings[index]
+		ring.visible = strength > 0.0
+		if not ring.visible:
+			continue
+		# Each ring starts at the edge of the reach and closes in, one after
+		# the other, fading as it reaches the mouth.
+		var phase := fmod(elapsed * 0.9 + float(index) / rings.size(), 1.0)
+		var radius: float = lerpf(GameConfig.MAGNET_REACH, 0.6, phase)
+		ring.position = Vector3(at.x, 0.05, at.y)
+		ring.scale = Vector3(radius, 1.0, radius)
+		(ring.material_override as ShaderMaterial).set_shader_parameter(
+			"strength", strength * 0.9 * sin(phase * PI)
+		)
 
 
 ## Specks of pollen hanging in the light over the whole arena.

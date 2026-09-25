@@ -42,11 +42,14 @@ func set_state(carried_item: int, active_effect: int, ratio: float) -> void:
 
 const GHOST := 5
 const SHEARS := 6
+const MAGNET := 7
 
 
 func _effect_color() -> Color:
 	if effect == 2:
 		return GameConfig.FROST_COLOR
+	if effect == MAGNET or carried == MAGNET:
+		return GameConfig.MAGNET_COLOR
 	if effect == SHEARS or carried == SHEARS:
 		return GameConfig.SHEARS_COLOR
 	if effect == GHOST or carried == GHOST:
@@ -89,6 +92,20 @@ func _draw() -> void:
 		if carried != 0 or effect != 0:
 			item_color = GameConfig.PHASE_COLOR.lerp(GameConfig.PHASE_PALE_COLOR, glow)
 		draw_arc(centre, radius * 0.46, 0.0, TAU, 32, item_color, 3.0, true)
+		return
+
+	# The magnet: a red horseshoe, open at the top, with white tips.
+	if showing == MAGNET:
+		var charged := carried != 0 or effect != 0
+		var red := GameConfig.MAGNET_COLOR if charged else item_color
+		var tip := GameConfig.MAGNET_TIP_COLOR.lerp(GameConfig.MAGNET_COLOR, 0.3 * glow) if charged else item_color
+		var bend := radius * 0.34
+		var bottom := centre + Vector2(0.0, radius * 0.1)
+		draw_arc(bottom, bend, 0.0, PI, 20, red, 6.0, true)
+		for side: float in [-1.0, 1.0]:
+			var top := bottom + Vector2(side * bend, -radius * 0.18)
+			draw_line(bottom + Vector2(side * bend, 0.0), top, red, 6.0, true)
+			draw_line(top, top + Vector2(0.0, -radius * 0.16), tip, 6.0, true)
 		return
 
 	# The shears: two crossed blades and their two finger rings.

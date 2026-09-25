@@ -22,6 +22,7 @@ var _spit_cooldown := 0.0
 var boosts_fired := 0
 var ghosts_fired := 0
 var shears_fired := 0
+var magnets_fired := 0
 var spits := 0
 
 
@@ -71,6 +72,13 @@ func _use_items(game_match: SnakeMatch, world: SnakeWorld, delta: float) -> void
 			if _agent.body_ahead(game_match, world) and world.use_item():
 				ghosts_fired += 1
 				Journal.info("rival", "%s fired the ghost ring through a body" % name)
+		SnakeWorld.Item.MAGNET:
+			# Worth firing over a good patch, not over bare sand.
+			var patch := _gems_near(game_match, world)
+			var worth_it: bool = patch >= GameConfig.RIVAL_MAGNET_GEMS
+			if world.effect == SnakeWorld.Item.NONE and worth_it and world.use_item():
+				magnets_fired += 1
+				Journal.info("rival", "%s switched on a magnet" % name)
 		SnakeWorld.Item.SHEARS:
 			# Blades are drawn when there is a body to put them through.
 			if _agent.body_within(game_match, world, GameConfig.RIVAL_SHEARS_REACH) and world.use_item():
@@ -90,3 +98,12 @@ func _digest(game_match: SnakeMatch, world: SnakeWorld, delta: float) -> void:
 		spits += 1
 		_spit_cooldown = GameConfig.RIVAL_SPIT_COOLDOWN
 		Journal.info("rival", "%s brought up %.1f matter at %.1f" % [name, amount, world.score + amount])
+
+
+func _gems_near(game_match: SnakeMatch, world: SnakeWorld) -> int:
+	var count := 0
+	var reach_squared := GameConfig.MAGNET_REACH * GameConfig.MAGNET_REACH
+	for gem: Vector2 in game_match.food:
+		if gem.distance_squared_to(world.head_position) < reach_squared:
+			count += 1
+	return count

@@ -456,6 +456,9 @@ func _on_item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 	elif kind == SnakeWorld.Ground.SHEARS:
 		color = GameConfig.SHEARS_COLOR
 		told = "picked up the crystal shears, stored in the slot"
+	elif kind == SnakeWorld.Ground.MAGNET:
+		color = GameConfig.MAGNET_COLOR
+		told = "picked up a magnet, stored in the slot"
 	if crate:
 		match roll:
 			SnakeWorld.Item.SLOW:
@@ -1037,6 +1040,11 @@ func _demo_key(keycode: int) -> void:
 	if keycode == KEY_B:
 		game_match.drop(SnakeWorld.Ground.BOLT)
 		Journal.info("game", "Demo: a bolt dropped on request")
+	elif keycode == KEY_J:
+		var mine = local_snake()
+		if mine != null and mine.alive:
+			game_match.drop_at(SnakeWorld.Ground.MAGNET, mine.head_position + mine.direction() * 4.0)
+			Journal.info("game", "Demo: a magnet dropped ahead of you")
 	elif keycode == KEY_K:
 		var mine = local_snake()
 		if mine != null and mine.alive:
@@ -1090,6 +1098,8 @@ func _use_item() -> void:
 		Journal.info("game", "Ghost ring fired: %.0fs through bodies" % GameConfig.PHASE_DURATION)
 	elif fired == SnakeWorld.Item.SHEARS:
 		Journal.info("game", "Crystal shears drawn: %.0fs of cutting" % GameConfig.SHEARS_DURATION)
+	elif fired == SnakeWorld.Item.MAGNET:
+		Journal.info("game", "Magnet on: %.0fs of pulling gems in" % GameConfig.MAGNET_DURATION)
 	else:
 		Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
 

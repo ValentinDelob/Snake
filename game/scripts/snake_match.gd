@@ -51,6 +51,7 @@ var _next_bolt_at := 0.0
 var _next_mystery_at := 0.0
 var _next_phase_at := 0.0
 var _next_shears_at := 0.0
+var _next_magnet_at := 0.0
 ## Who cut whom last, and until when they may not do it again.
 var _recut_until: Dictionary = {}     # Vector2i(cutter, victim) -> time
 var _forced_roll: SnakeWorld.Item = SnakeWorld.Item.NONE
@@ -117,6 +118,9 @@ func start() -> void:
 		GameConfig.SHEARS_FIRST_SPAWN.x, GameConfig.SHEARS_FIRST_SPAWN.y
 	)
 	_recut_until = {}
+	_next_magnet_at = _rng.randf_range(
+		GameConfig.MAGNET_FIRST_SPAWN.x, GameConfig.MAGNET_FIRST_SPAWN.y
+	)
 
 	var ids: Array = snakes.keys()
 	ids.sort()
@@ -426,6 +430,8 @@ func step(delta: float) -> void:
 			continue
 		_check_bite(id, snake)
 
+	pull_matter(delta)
+
 	for id: int in snakes:
 		var snake: SnakeWorld = snakes[id]
 		if snake.alive:
@@ -457,6 +463,39 @@ func _check_bite(id: int, snake: SnakeWorld) -> void:
 			decompose(snake)
 			snake_died.emit(id, SnakeWorld.Outcome.DEAD_OTHER)
 			return
+
+
+## Every snake running a magnet draws the gems around its head towards its
+## mouth, gently at the edge of the field and fast right at the lips. A gem
+## within two fields goes to the nearer one. The matter only moves; eating
+## it is still the head's job, one step later.
+func pull_matter(delta: float) -> int:
+	var magnets: Array[SnakeWorld] = []
+	for id: int in snakes:
+		var snake: SnakeWorld = snakes[id]
+		if snake.alive and snake.magnetic():
+			magnets.append(snake)
+	if magnets.is_empty():
+		return 0
+	var reach_squared := GameConfig.MAGNET_REACH * GameConfig.MAGNET_REACH
+	var moved := 0
+	for index in range(food.size()):
+		var gem: Vector2 = food[index]
+		var puller: SnakeWorld = null
+		var best := reach_squared
+		for magnet: SnakeWorld in magnets:
+			var distance := gem.distance_squared_to(magnet.head_position)
+			if distance < best:
+				best = distance
+				puller = magnet
+		if puller == null:
+			continue
+		var distance := sqrt(best)
+		var closeness := 1.0 - distance / GameConfig.MAGNET_REACH
+		var speed := lerpf(GameConfig.MAGNET_PULL, GameConfig.MAGNET_PULL_CLOSE, closeness)
+		food[index] = gem.move_toward(puller.head_position, minf(distance, speed * delta))
+		moved += 1
+	return moved
 
 
 ## Slice `victim` where the head of `cutter` touches it. What was behind the
@@ -529,6 +568,12 @@ func _check_ground(id: int, snake: SnakeWorld) -> void:
 			_next_phase_at = elapsed + _rng.randf_range(
 				GameConfig.PHASE_RESPAWN.x, GameConfig.PHASE_RESPAWN.y
 			)
+		elif item["kind"] == SnakeWorld.Ground.MAGNET:
+			roll = SnakeWorld.Item.MAGNET
+			snake.carried = SnakeWorld.Item.MAGNET
+			_next_magnet_at = elapsed + _rng.randf_range(
+				GameConfig.MAGNET_RESPAWN.x, GameConfig.MAGNET_RESPAWN.y
+			)
 		elif item["kind"] == SnakeWorld.Ground.SHEARS:
 			roll = SnakeWorld.Item.SHEARS
 			snake.carried = SnakeWorld.Item.SHEARS
@@ -576,6 +621,8 @@ func _update_spawns() -> void:
 		drop(SnakeWorld.Ground.PHASE)
 	if not has_ground(SnakeWorld.Ground.SHEARS) and elapsed >= _next_shears_at:
 		drop(SnakeWorld.Ground.SHEARS)
+	if not has_ground(SnakeWorld.Ground.MAGNET) and elapsed >= _next_magnet_at:
+		drop(SnakeWorld.Ground.MAGNET)
 
 
 ## Seconds left on the clock.
@@ -660,6 +707,8 @@ static func _ground_radius(kind: SnakeWorld.Ground) -> float:
 			return GameConfig.BOOST_RADIUS
 		SnakeWorld.Ground.PHASE:
 			return GameConfig.PHASE_RADIUS
+		SnakeWorld.Ground.MAGNET:
+			return GameConfig.MAGNET_RADIUS
 		SnakeWorld.Ground.SHEARS:
 			return GameConfig.SHEARS_RADIUS
 		_:

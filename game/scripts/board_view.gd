@@ -26,6 +26,8 @@ var _crate_lamp: OmniLight3D
 var _crate_material: StandardMaterial3D
 var _shears: Node3D
 var _shears_lamp: OmniLight3D
+var _magnet: Node3D
+var _magnet_lamp: OmniLight3D
 var _field: MultiMeshInstance3D
 var _field_mesh: MultiMesh
 var _flash_ring: MeshInstance3D
@@ -102,6 +104,9 @@ func refresh(game_match: SnakeMatch, local_id: int, elapsed: float, flash: float
 		_fx.trail(
 			id, head, GameConfig.SHEARS_COLOR if blades else visual["palette"][0],
 			snake.alive and (blades or snake.boost_intensity() > 0.3)
+		)
+		_fx.magnet_field(
+			id, snake.head_position, snake.magnet_intensity() if snake.alive else 0.0, elapsed
 		)
 		if not snake.alive:
 			continue
@@ -288,6 +293,16 @@ func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 
 	elif _ghost_sparkles.emitting:
 		_ghost_sparkles.emitting = false
+
+	var has_magnet := game_match.has_ground(SnakeWorld.Ground.MAGNET)
+	_magnet.visible = has_magnet
+	_magnet_lamp.visible = has_magnet
+	if has_magnet:
+		var spot := game_match.ground_position(SnakeWorld.Ground.MAGNET)
+		_magnet.position = Vector3(spot.x, 0.75 + 0.1 * sin(elapsed * 2.8), spot.y)
+		_magnet.rotation = Vector3(0.0, elapsed * 1.6, 0.0)
+		_magnet_lamp.position = _magnet.position + Vector3(0.0, 0.3, 0.0)
+		_magnet_lamp.light_energy = 1.0 + 0.4 * sin(elapsed * 3.3)
 
 	var has_shears := game_match.has_ground(SnakeWorld.Ground.SHEARS)
 	_shears.visible = has_shears
@@ -716,6 +731,48 @@ func _build_props() -> void:
 	_ghost_lamp.shadow_enabled = false
 	_ghost_lamp.visible = false
 	add_child(_ghost_lamp)
+
+	# The magnet: a horseshoe, red with white tips, standing open end up.
+	# Three bars and two caps - five boxes - read as a magnet from anywhere.
+	var red := StandardMaterial3D.new()
+	red.albedo_color = GameConfig.MAGNET_COLOR
+	red.emission_enabled = true
+	red.emission = GameConfig.MAGNET_COLOR
+	red.emission_energy_multiplier = 0.8
+	red.roughness = 0.3
+	var white := StandardMaterial3D.new()
+	white.albedo_color = GameConfig.MAGNET_TIP_COLOR
+	white.emission_enabled = true
+	white.emission = GameConfig.MAGNET_TIP_COLOR
+	white.emission_energy_multiplier = 0.6
+	_magnet = Node3D.new()
+	_magnet.name = "Magnet"
+	_magnet.visible = false
+	var parts := [
+		[Vector3(0.62, 0.16, 0.18), Vector3(0.0, -0.3, 0.0), red],
+		[Vector3(0.16, 0.5, 0.18), Vector3(-0.23, 0.03, 0.0), red],
+		[Vector3(0.16, 0.5, 0.18), Vector3(0.23, 0.03, 0.0), red],
+		[Vector3(0.17, 0.16, 0.19), Vector3(-0.23, 0.36, 0.0), white],
+		[Vector3(0.17, 0.16, 0.19), Vector3(0.23, 0.36, 0.0), white],
+	]
+	for part: Array in parts:
+		var box := BoxMesh.new()
+		box.size = part[0]
+		var block := MeshInstance3D.new()
+		block.mesh = box
+		block.material_override = part[2]
+		block.position = part[1]
+		_magnet.add_child(block)
+	_magnet.scale = Vector3.ONE * 1.3
+	add_child(_magnet)
+
+	_magnet_lamp = OmniLight3D.new()
+	_magnet_lamp.name = "MagnetLamp"
+	_magnet_lamp.light_color = GameConfig.MAGNET_COLOR
+	_magnet_lamp.omni_range = 5.0
+	_magnet_lamp.shadow_enabled = false
+	_magnet_lamp.visible = false
+	add_child(_magnet_lamp)
 
 	# The crystal shears: two blades of cut glass crossed at a pivot, each
 	# with a finger ring. A few extruded triangles and two small tori.

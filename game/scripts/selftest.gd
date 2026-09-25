@@ -161,9 +161,20 @@ var shears_matter := 0.0
 var shears_conserved := false
 var shears_kept := 0.0
 var shears_recut_blocked := false
-var shears_fired_live := false
-var shears_bar_text := ""
-var _shears_stage := 0
+
+## the newer items fired for real from the slot: item name -> what the bar said
+var live_bar_text := {}
+var _live_index := 0
+var _live_stage := 0
+const LIVE_ITEMS := [SnakeWorld.Item.SHEARS, SnakeWorld.Item.MAGNET]
+
+## the magnet: nothing moves without it, near gems come in, far ones stay
+var magnet_still_without := false
+var magnet_near_left := -1.0
+var magnet_mid_left := -1.0
+var magnet_far_moved := -1.0
+var magnet_worth_kept := false
+
 ## debug readout: the frame rate it showed, and whether it went away again
 var debug_fps_shown := 0
 var debug_hidden := false
@@ -682,6 +693,7 @@ func _check_display_settings(game) -> void:
 		str(fps_limits_seen), str(vsync_states_seen.keys()),
 	])
 	_check_shears_rule()
+	_check_magnet_rule()
 	# The effects setting, walked both ways and back to where it was.
 	var fx: FxLayer = game.board_view().fx()
 	for _index in range(2):
@@ -1057,6 +1069,35 @@ func _check_shears_rule() -> void:
 	])
 
 
+## The magnet, judged on the rules: gems laid at known distances from a
+## still head, then the field switched on for a second and a half.
+func _check_magnet_rule() -> void:
+	var arena := SnakeMatch.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, 11)
+	var snake := arena.add_snake(1)
+	var head := Vector2(40.0, 28.0)
+	snake.reset(head, 0.0)
+	var near := head + Vector2(0.0, 3.0)
+	var mid := head + Vector2(0.0, -6.0)
+	var far := head + Vector2(0.0, GameConfig.MAGNET_REACH + 3.0)
+	arena.food = PackedVector2Array([near, mid, far])
+	arena.food_value = PackedFloat32Array([0.5, 1.0, 2.0])
+
+	# Nothing moves without a magnet running.
+	arena.pull_matter(GameConfig.SIM_STEP)
+	magnet_still_without = arena.food[0] == near and arena.food[1] == mid
+
+	snake.start_effect(SnakeWorld.Item.MAGNET)
+	for _step in range(int(1.5 * GameConfig.SIM_HZ)):
+		arena.pull_matter(GameConfig.SIM_STEP)
+	magnet_near_left = arena.food[0].distance_to(head)
+	magnet_mid_left = arena.food[1].distance_to(head)
+	magnet_far_moved = arena.food[2].distance_to(far)
+	magnet_worth_kept = absf(_worth_of(arena) - 3.5) < 0.001
+	Journal.info("selftest", "magnet rule: still without %s; near 3.0 -> %.2f, mid 6.0 -> %.2f, far moved %.2f, worth kept %s" % [
+		magnet_still_without, magnet_near_left, magnet_mid_left, magnet_far_moved, magnet_worth_kept,
+	])
+
+
 static func _worth_of(arena: SnakeMatch) -> float:
 	var total := 0.0
 	for value: float in arena.food_value:
@@ -1066,31 +1107,42 @@ static func _worth_of(arena: SnakeMatch) -> float:
 
 ## Hand our own snake the shears once the scripted phases are over and fire
 ## them with the space bar: the slot, the effect and the bar have to agree.
-func _check_shears_live(game) -> void:
+## Hand our own snake each of the newer items once the scripted phases are
+## over and fire it with the space bar: the slot, the effect and the bar
+## have to agree. One item after the other, each waiting for the last.
+func _check_items_live(game) -> void:
+	if _live_index >= LIVE_ITEMS.size():
+		return
 	var snake = game.local_snake()
 	if snake == null or not snake.alive:
 		return
-	match _shears_stage:
+	var item: SnakeWorld.Item = LIVE_ITEMS[_live_index]
+	match _live_stage:
 		0:
 			if snake.effect == SnakeWorld.Item.NONE and snake.carried == SnakeWorld.Item.NONE:
-				snake.carried = SnakeWorld.Item.SHEARS
-				_shears_stage = 1
+				snake.carried = item
+				_live_stage = 1
 		1:
 			press(KEY_SPACE)
 			release(KEY_SPACE)
-			_shears_stage = 2
+			_live_stage = 2
 		2:
-			if snake.cutting():
-				shears_fired_live = true
-				_shears_stage = 3
-			elif snake.carried != SnakeWorld.Item.SHEARS:
-				_shears_stage = 0
+			if snake.effect == item:
+				_live_stage = 3
+			elif snake.carried != item:
+				_live_stage = 0
 		3:
-			# The key fired the shears at the start of the last frame, before
-			# the bar was drawn: it is read one frame later.
-			shears_bar_text = game.hud()._boost_label.text
-			Journal.info("selftest", "shears fired from the slot: bar says '%s'" % shears_bar_text)
-			_shears_stage = 4
+			# The key fired the item at the start of the last frame, before the
+			# bar was drawn: it is read one frame later.
+			var text: String = game.hud()._boost_label.text
+			live_bar_text[SnakeWorld.Item.keys()[item]] = text
+			Journal.info("selftest", "%s fired from the slot: bar says '%s'" % [SnakeWorld.Item.keys()[item], text])
+			_live_stage = 4
+		4:
+			# Let it run out before handing over the next one.
+			if snake.effect == SnakeWorld.Item.NONE:
+				_live_index += 1
+				_live_stage = 0
 
 
 ## Bringing matter back up: a snake with nothing much inside it must not
@@ -1204,7 +1256,7 @@ func _watch_rivals(game, now: float) -> void:
 		_check_rival_rules(game, now)
 	# Our own shears go last, once the rivals have been judged.
 	if phase == Phase.WAIT and (rivals.is_empty() or _rival_stage == 3):
-		_check_shears_live(game)
+		_check_items_live(game)
 
 
 func _bar_lists_rivals(game) -> bool:
@@ -1372,7 +1424,7 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) rivals(%d/%d, offered=%d, moved=%d, ate=%d, named=%s, boost=%s, spit=%.0f%%, result=%s) shears(deadly=%s, cut=%.1f, conserved=%s, kept=%.1f, recut_blocked=%s, live=%s) look(sky=%s, effects=%d/%s, bursts=%d, shake=%.2f) arena=%.0fx%.0f games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) rivals(%d/%d, offered=%d, moved=%d, ate=%d, named=%s, boost=%s, spit=%.0f%%, result=%s) shears(deadly=%s, cut=%.1f, conserved=%s, kept=%.1f, recut_blocked=%s) magnet(still=%s, near=%.2f, mid=%.2f, far=%.2f, kept=%s) live=%s look(sky=%s, effects=%d/%s, bursts=%d, shake=%.2f) arena=%.0fx%.0f games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
@@ -1388,7 +1440,8 @@ func summary(game) -> String:
 		rivals_seen, rivals_expected, rival_counts_offered.size(), rivals_moved.size(),
 		rivals_grew.size(), rivals_named, rival_boost_rule, rival_spit_share * 100.0,
 		rival_result_title, shears_deadly_without, shears_matter, shears_conserved, shears_kept,
-		shears_recut_blocked, shears_fired_live,
+		shears_recut_blocked, magnet_still_without, magnet_near_left, magnet_mid_left,
+		magnet_far_moved, magnet_worth_kept, str(live_bar_text.keys()),
 		sky_seen, effects_states.size(), effects_follow, bursts_seen,
 		peak_trauma, arena_seen.x, arena_seen.y,
 		stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
@@ -1519,6 +1572,8 @@ func _verify_solo(stats: Dictionary) -> Array:
 	failures.append_array(_verify_rivals())
 	failures.append_array(_verify_look())
 	failures.append_array(_verify_shears())
+	failures.append_array(_verify_magnet())
+	failures.append_array(_verify_live_items())
 	var field := 1 + maxi(0, rivals_expected)
 	if arena_seen.distance_to(GameConfig.arena_for(field)) > 0.1:
 		failures.append("solo arena was %.0fx%.0f, expected %.0fx%.0f for %d snakes" % [
@@ -1630,10 +1685,33 @@ func _verify_shears() -> Array:
 		failures.append("the cut snake kept its whole body (%.1f)" % shears_kept)
 	if not shears_recut_blocked:
 		failures.append("one pass of the shears cut the same body twice")
-	if not shears_fired_live:
-		failures.append("the shears in the slot never fired from the space bar")
-	elif not shears_bar_text.begins_with("SHEARS"):
-		failures.append("the bar said '%s' while cutting" % shears_bar_text)
+	return failures
+
+
+func _verify_magnet() -> Array:
+	var failures: Array = []
+	if not magnet_still_without:
+		failures.append("gems moved towards a head with no magnet running")
+	if magnet_near_left < 0.0 or magnet_near_left > 0.05:
+		failures.append("a gem 3 units away was still %.2f away after 1.5 s of magnet" % magnet_near_left)
+	if magnet_mid_left < 0.0 or magnet_mid_left > 1.0:
+		failures.append("a gem 6 units away was still %.2f away after 1.5 s of magnet" % magnet_mid_left)
+	if magnet_far_moved != 0.0:
+		failures.append("a gem out of reach moved %.2f units" % magnet_far_moved)
+	if not magnet_worth_kept:
+		failures.append("pulling gems changed what the field was worth")
+	return failures
+
+
+## Every newer item has to fire from the slot and say its name on the bar.
+func _verify_live_items() -> Array:
+	var failures: Array = []
+	for item: SnakeWorld.Item in LIVE_ITEMS:
+		var name: String = SnakeWorld.Item.keys()[item]
+		if not live_bar_text.has(name):
+			failures.append("%s in the slot never fired from the space bar" % name)
+		elif not str(live_bar_text[name]).begins_with(name):
+			failures.append("the bar said '%s' while %s was running" % [live_bar_text[name], name])
 	return failures
 
 

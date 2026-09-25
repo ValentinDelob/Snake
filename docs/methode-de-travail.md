@@ -57,8 +57,9 @@ fermer la fenêtre proprement.
 | `--profile` | mesure les images, sans synchronisation verticale |
 | `--profile-capped` | même mesure, dans les conditions réelles du joueur |
 
-En mode `--demo`, trois touches posent un objet : **B** un éclair, **N** une
-caisse (tour à tour bonus et malus), **K** des ciseaux juste devant vous.
+En mode `--demo`, quatre touches posent un objet : **B** un éclair, **N** une
+caisse (tour à tour bonus et malus), **K** des ciseaux et **J** un aimant, juste
+devant vous.
 
 ## L'auto-test
 

@@ -153,6 +153,17 @@ const SHEARS_DURATION := 4.0
 ## this long, or a head lingering on the stump would nibble it away.
 const SHEARS_RECUT := 0.6
 
+## The magnet: common, and pure pleasure. For a few seconds the gems near
+## the head slide towards the mouth, faster and faster as they close in.
+## Only matter is pulled - items stay where they lie.
+const MAGNET_RADIUS := 0.6
+const MAGNET_FIRST_SPAWN := Vector2(12.0, 20.0)
+const MAGNET_RESPAWN := Vector2(18.0, 30.0)
+const MAGNET_DURATION := 6.0
+const MAGNET_REACH := 7.0            # how far the pull is felt, in units
+const MAGNET_PULL := 4.0             # speed at the edge of the reach, units/s
+const MAGNET_PULL_CLOSE := 14.0      # and right at the mouth
+
 const SLOW_DURATION := 5.0
 const SLOW_FACTOR := 0.5
 const SLOW_RAMP_DOWN := 0.5    # seconds to lose the speed
@@ -242,6 +253,8 @@ const RIVAL_SPIT_AT := Vector2(45.0, 85.0)
 const RIVAL_SPIT_COOLDOWN := 4.0
 ## A rival draws the shears once another body is this close to its head.
 const RIVAL_SHEARS_REACH := 9.0
+## And fires a magnet once this many gems are within its reach.
+const RIVAL_MAGNET_GEMS := 5
 
 ## The simulation runs at a fixed rate so it behaves the same on any machine.
 const SIM_HZ := 120.0
@@ -310,6 +323,8 @@ const FROST_COLOR := Color(0.4, 0.74, 1.0)
 const FROST_PALE_COLOR := Color(0.85, 0.95, 1.0)
 const SHEARS_COLOR := Color(0.45, 0.95, 1.0)
 const SHEARS_PALE_COLOR := Color(0.9, 1.0, 1.0)
+const MAGNET_COLOR := Color(1.0, 0.28, 0.42)
+const MAGNET_TIP_COLOR := Color(0.95, 0.97, 1.0)
 
 ## One palette per player: head, body, tail. The first is always yours.
 ## Each one runs through two hues from head to tail, so a body reads as a
@@ -362,4 +377,6 @@ static func effect_duration(kind: int) -> float:
 			return PHASE_DURATION
 		SnakeWorld.Item.SHEARS:
 			return SHEARS_DURATION
+		SnakeWorld.Item.MAGNET:
+			return MAGNET_DURATION
 	return SLOW_DURATION

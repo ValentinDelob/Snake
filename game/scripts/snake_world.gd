@@ -14,10 +14,10 @@ extends RefCounted
 enum Outcome { MOVING, DEAD_WALL, DEAD_SELF, DEAD_OTHER, DEAD_ROCK }
 
 ## What an item does once it takes effect.
-enum Item { NONE, SPEED, SLOW, SCORE_UP, SCORE_DOWN, PHASE, SHEARS }
+enum Item { NONE, SPEED, SLOW, SCORE_UP, SCORE_DOWN, PHASE, SHEARS, MAGNET }
 
 ## What can be lying on the arena.
-enum Ground { BOLT, MYSTERY, PHASE, SHEARS }
+enum Ground { BOLT, MYSTERY, PHASE, SHEARS, MAGNET }
 
 ## Distance the head must travel before the path records another point.
 const PATH_SAMPLE := 0.06
@@ -299,6 +299,8 @@ func start_effect(kind: Item) -> void:
 			effect_time_left = GameConfig.PHASE_DURATION
 		Item.SHEARS:
 			effect_time_left = GameConfig.SHEARS_DURATION
+		Item.MAGNET:
+			effect_time_left = GameConfig.MAGNET_DURATION
 		_:
 			return
 	effect = kind
@@ -315,6 +317,18 @@ func phase_intensity() -> float:
 	if not phasing():
 		return 0.0
 	return clampf(effect_time_left / GameConfig.PHASE_DURATION, 0.0, 1.0)
+
+
+## While this runs the gems near the head are drawn to the mouth.
+func magnetic() -> bool:
+	return effect == Item.MAGNET and effect_time_left > 0.0
+
+
+## How strongly the field shows: full when fired, fading with the effect.
+func magnet_intensity() -> float:
+	if not magnetic():
+		return 0.0
+	return clampf(0.3 + 0.7 * effect_time_left / GameConfig.MAGNET_DURATION, 0.0, 1.0)
 
 
 ## While this runs the head slices through other snakes instead of dying

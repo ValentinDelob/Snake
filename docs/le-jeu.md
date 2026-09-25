@@ -94,7 +94,7 @@ passages entre les rochers, et ne peut plus esquiver au dernier moment.
 
 ## Les objets
 
-Quatre objets apparaissent au sol, en plus de la matière. Un seul peut être
+Cinq objets apparaissent au sol, en plus de la matière. Un seul peut être
 rangé à la fois dans l'emplacement.
 
 ### L'éclair de vitesse
@@ -160,6 +160,27 @@ d'étincelles, et le bandeau affiche `SHEARS` avec le temps restant.
 Les rivaux vont chercher les ciseaux quand ils en voient, les sortent dès
 qu'un autre corps passe à moins de 9 unités de leur tête, puis foncent sur
 le corps le plus proche au lieu de l'éviter.
+
+### L'aimant
+
+**Fréquent** : le premier apparaît entre 12 et 20 secondes de manche, les
+suivants entre 18 et 30. Un petit fer à cheval rouge aux pointes blanches.
+
+Il se range dans l'emplacement et se déclenche avec **ESPACE**. Pendant
+**6 secondes**, les gemmes à moins de **7 unités** de la tête glissent vers la
+bouche : doucement au bord du champ (4 unités/s), vite tout près (14
+unités/s). Des anneaux rouges se resserrent sur le sable autour de la tête et
+le bandeau affiche `MAGNET` avec le temps restant.
+
+- Seule la matière est attirée ; les objets au sol ne bougent pas.
+- Une gemme prise entre deux aimants va vers le plus proche.
+- L'aimant déplace les gemmes, il ne les mange pas : c'est toujours la tête
+  qui avale, un instant plus tard. Rien n'est créé ni perdu.
+- C'est la simulation qui déplace les gemmes, donc en réseau tout le monde les
+  voit glisser.
+
+Les rivaux font un petit détour pour ramasser un aimant, et l'allument dès
+qu'au moins **5 gemmes** sont à leur portée.
 
 ## Les rivaux
 
