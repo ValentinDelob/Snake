@@ -58,7 +58,7 @@ var _menu_page: MenuPage = MenuPage.MAIN
 ## and it can be driven by the self-test.
 var _menu_items: Array[Control] = []
 var _menu_index := 0
-var _menu_best := 0
+var _menu_best := 0.0
 var _menu_games := 0
 var _menu_message := ""
 var _saved_address := ""
@@ -67,6 +67,9 @@ var _debug_panel: PanelContainer
 var _debug_fps: Label
 var _shown_fps := -1
 
+var _clock: Label
+var _shown_clock := -1
+var _shown_best := -1
 var _shown_score := -1
 var _breath := 0.0
 var _score_note: Label
@@ -124,7 +127,7 @@ func _build_top_bar() -> void:
 	score_box.add_theme_constant_override("separation", 10)
 	score_pill.add_child(score_box)
 
-	var score_caption := _label("SCORE", 13, GameConfig.DIM_COLOR)
+	var score_caption := _label("LENGTH", 13, GameConfig.DIM_COLOR)
 	score_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	score_box.add_child(score_caption)
 
@@ -147,8 +150,17 @@ func _build_top_bar() -> void:
 	mode_style.bg_color = Color(PANEL_COLOR.r, PANEL_COLOR.g, PANEL_COLOR.b, 0.45)
 	row.add_child(mode_pill)
 
+	var mode_box := HBoxContainer.new()
+	mode_box.add_theme_constant_override("separation", 12)
+	mode_pill.add_child(mode_box)
+
+	# The clock, in the middle, where everyone will look for it.
+	_clock = _label("5:00", 17, GameConfig.TEXT_COLOR)
+	mode_box.add_child(_clock)
+
 	_mode_chip = _label("3D follow", 13, GameConfig.DIM_COLOR)
-	mode_pill.add_child(_mode_chip)
+	_mode_chip.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	mode_box.add_child(_mode_chip)
 
 	row.add_child(_spacer())
 
@@ -225,13 +237,43 @@ func _build_top_bar() -> void:
 	_top_bar.add_child(_spectator_label)
 
 
-func set_stats(score: int, best: int, mode_text: String) -> void:
-	if score != _shown_score:
-		_shown_score = score
-		_score_value.text = str(score)
-		_punch(_score_value)
-	_best_value.text = str(best)
-	_mode_chip.text = mode_text
+## The two numbers that matter now: how long this snake is, and the longest
+## one ever grown. Both are lengths, not tallies.
+func set_stats(length: float, best: float, mode_text: String) -> void:
+	var shown := int(round(length * 10.0))
+	if shown != _shown_score:
+		if shown > _shown_score:
+			_punch(_score_value)
+		_shown_score = shown
+		_score_value.text = "%.1f" % length
+	var best_shown := int(round(best * 10.0))
+	if best_shown != _shown_best:
+		_shown_best = best_shown
+		_best_value.text = "%.1f" % best
+	if mode_text != _mode_chip.text:
+		_mode_chip.text = mode_text
+
+
+## How long is left on the round clock.
+func set_clock(seconds: float) -> void:
+	var whole := int(ceil(maxf(0.0, seconds)))
+	if whole == _shown_clock:
+		return
+	_shown_clock = whole
+	_clock.text = "%d:%02d" % [whole / 60, whole % 60]
+	_clock.add_theme_color_override(
+		"font_color",
+		GameConfig.DANGER_COLOR if whole <= 30 else GameConfig.TEXT_COLOR
+	)
+
+
+## Say out loud what dying cost, since it no longer ends anything.
+func announce_loss(length: float) -> void:
+	_score_note.text = "-%.1f" % length
+	_score_note.add_theme_color_override("font_color", GameConfig.DANGER_COLOR)
+	_score_note_time = 2.0
+	_score_note.modulate.a = 1.0
+	_punch(_score_note)
 
 
 ## Show or hide the debug readout, and keep it fed. The frame rate is the
@@ -257,13 +299,13 @@ func debug_readout() -> String:
 
 ## Call out a jump in the score: "+3" beside it, in its own colour, fading
 ## away on its own.
-func announce_score(points: int) -> void:
-	if points == 0:
+func announce_score(points: float) -> void:
+	if absf(points) < 0.05:
 		return
-	_score_note.text = "+%d" % points if points > 0 else str(points)
+	_score_note.text = "+%.1f" % points if points > 0.0 else "%.1f" % points
 	_score_note.add_theme_color_override(
 		"font_color",
-		GameConfig.SNAKE_HEAD_COLOR if points > 0 else GameConfig.DANGER_COLOR
+		GameConfig.SNAKE_HEAD_COLOR if points > 0.0 else GameConfig.DANGER_COLOR
 	)
 	_score_note_time = 1.6
 	_score_note.modulate.a = 1.0
@@ -311,7 +353,9 @@ func set_players(rows: Array, local_id: int, spectating: bool) -> void:
 			)
 			# Peer ids are huge random numbers: nobody needs to read those.
 			var name_text: String = "you" if row["id"] == local_id else "player %d" % (index + 1)
-			label.text = "%s  %d%s" % [name_text, row["score"], "" if row["alive"] else "  out"]
+			label.text = "%s  %.1f%s" % [
+				name_text, row["length"], "" if row["alive"] else "  gone",
+			]
 			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			label.add_theme_color_override(
 				"font_color", palette[0] if row["alive"] else GameConfig.DIM_COLOR
@@ -390,7 +434,7 @@ func _build_overlay() -> void:
 	card_box.add_child(_hints)
 
 
-func show_menu(best: int, games: int, message: String = "") -> void:
+func show_menu(best: float, games: int, message: String = "") -> void:
 	_menu_best = best
 	_menu_games = games
 	_menu_message = message
@@ -429,7 +473,7 @@ func _show_menu_page(page: MenuPage) -> void:
 				GameConfig.DANGER_COLOR if _menu_message != "" else GameConfig.TEXT_COLOR
 			)
 			_set_chips([
-				["BEST", str(_menu_best), GameConfig.ACCENT_COLOR],
+				["BEST", "%.1f" % _menu_best, GameConfig.ACCENT_COLOR],
 				["GAMES", str(_menu_games), GameConfig.TEXT_COLOR],
 			])
 			_set_buttons([
@@ -690,13 +734,17 @@ func show_lobby(is_host: bool, players: int, addresses: String, dialling: String
 
 
 ## The end of a multiplayer round: one winner, everybody else watched.
-func show_result(title: String, color: Color, subtitle: String, score: int) -> void:
+## The clock ran out. Whoever grew the biggest snake takes the round.
+func show_result(
+	title: String, color: Color, subtitle: String, length: float, best: float, record: bool
+) -> void:
 	_title.text = title
 	_title.add_theme_color_override("font_color", color)
 	_subtitle.text = subtitle
 	_subtitle.add_theme_color_override("font_color", GameConfig.TEXT_COLOR)
 	_set_chips([
-		["YOUR SCORE", str(score), GameConfig.TEXT_COLOR],
+		["YOUR LENGTH", "%.1f" % length, GameConfig.TEXT_COLOR],
+		["NEW BEST" if record else "BEST", "%.1f" % best, GameConfig.ACCENT_COLOR],
 	])
 	_set_call_to_action("ENTER", "back to the lobby")
 	_set_hints([
@@ -718,13 +766,13 @@ func show_pause() -> void:
 	_present()
 
 
-func show_game_over(cause: String, score: int, best: int, record: bool) -> void:
-	_title.text = "GAME OVER"
-	_title.add_theme_color_override("font_color", GameConfig.DANGER_COLOR)
+func show_game_over(cause: String, length: float, best: float, record: bool) -> void:
+	_title.text = "TIME"
+	_title.add_theme_color_override("font_color", GameConfig.ACCENT_COLOR)
 	_subtitle.text = cause
 	_set_chips([
-		["SCORE", str(score), GameConfig.TEXT_COLOR],
-		["NEW BEST" if record else "BEST", str(best), GameConfig.ACCENT_COLOR],
+		["LENGTH", "%.1f" % length, GameConfig.TEXT_COLOR],
+		["NEW BEST" if record else "BEST", "%.1f" % best, GameConfig.ACCENT_COLOR],
 	])
 	_set_call_to_action("R", "play again")
 	_set_hints([

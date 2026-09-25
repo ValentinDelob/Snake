@@ -9,6 +9,7 @@ const PATH := "user://savegame.json"
 
 const DEFAULTS := {
 	"high_score": 0,
+	"best_length": 0.0,
 	"games_played": 0,
 	"view": "3d",
 	"camera": "follow",
@@ -105,11 +106,22 @@ func set_preference(key: String, value: Variant) -> void:
 
 
 ## Register a finished game. Returns true on a new record.
-func record_game(score: int) -> bool:
-	data["games_played"] = games_played() + 1
-	var record := score > high_score()
-	if record:
-		Journal.info("profile", "New high score: %d (was %d)" % [score, high_score()])
-		data["high_score"] = score
+## The longest snake ever grown, which is what the game is played for.
+func best_length() -> float:
+	return float(data["best_length"])
+
+
+## Remember a length if it beats the record. Returns true when it does.
+func record_length(length: float) -> bool:
+	if length <= best_length() + 0.01:
+		return false
+	Journal.info("profile", "New best length: %.1f (was %.1f)" % [length, best_length()])
+	data["best_length"] = length
 	save()
-	return record
+	return true
+
+
+## One more round played, whatever came of it.
+func finish_round() -> void:
+	data["games_played"] = games_played() + 1
+	save()

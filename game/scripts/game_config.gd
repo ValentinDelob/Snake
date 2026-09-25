@@ -140,6 +140,12 @@ const HEAD_BULGE := 1.3           # how much thicker the head is
 const HEAD_BULGE_LENGTH := 0.9    # over how much body the bulge fades out
 const TAIL_TAPER := 0.45          # thickness left just before the tail tip
 
+## A round is played against the clock, not to the death: dying costs you
+## everything you swallowed and a couple of seconds, and the longest snake
+## when the clock runs out takes it.
+const ROUND_SECONDS := 300.0
+const RESPAWN_DELAY := 2.0
+
 ## The simulation runs at a fixed rate so it behaves the same on any machine.
 const SIM_HZ := 120.0
 const SIM_STEP := 1.0 / SIM_HZ

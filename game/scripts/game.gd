@@ -51,6 +51,7 @@ var stats := {
 	"steps": 0,
 	"games": 0,
 	"max_score": 0,
+	"deaths": 0,
 	"last_score": 0,
 	"slow_frames": 0,
 	"fps": 0.0,
@@ -154,6 +155,8 @@ func _parse_arguments() -> void:
 				lose_after = float(value)
 			"--expect-timeout":
 				_pending_expect_timeout = true
+			"--round-seconds":
+				_round_seconds = float(value)
 			"--start-score":
 				_start_score = int(value)
 			"--profile":
@@ -168,8 +171,14 @@ func _parse_arguments() -> void:
 				# The other half of the question: with vsync where a player
 				# has it, how many frames still miss their slot?
 				_profiler = FrameProfiler.new()
+	if _driver != null and _round_seconds <= 0.0:
+		_round_seconds = 150.0    # a test cannot wait five minutes
 	if _max_steps <= 0:
-		_max_steps = int(GameConfig.SIM_HZ * 100.0)  # long enough for the whole script
+		# The budget has to outlast the round, or a run is cut off before
+		# the clock it is meant to be testing.
+		_max_steps = int(GameConfig.SIM_HZ * (
+			_round_seconds + 40.0 if _round_seconds > 0.0 else 100.0
+		))
 	if _driver != null:
 		_driver.expect_timeout = _pending_expect_timeout
 		PlayerProfile.use_path("user://selftest_profile.json")
@@ -181,13 +190,17 @@ var _pending_expect_timeout := false
 ## Measuring aid: a round that starts with points already on the board is a
 ## round with a long snake, which is when the game works hardest.
 var _start_score := 0
+## Shorter rounds for a test or a tuning session; zero keeps the real one.
+var _round_seconds := 0.0
 ## True while a profiling run is driving the display itself.
 var _display_locked := false
 ## Only built by --profile: measuring costs a little, so it is opt in.
 var _profiler: FrameProfiler = null
 var _last_menu_message := ""
 var _last_death_cause: SnakeWorld.Outcome = SnakeWorld.Outcome.MOVING
-var _score_on_bar := -1          # the score the bar is already showing
+var _length_on_bar := -1.0       # the length the bar is already showing
+var _best_length := 0.0          # the longest snake of this session
+var _length_lost := 0.0          # how long the snake was when it last died
 
 
 ## --host and --join let a test (or a shortcut) open a session immediately.
@@ -269,17 +282,22 @@ func play_time() -> float:
 
 func _refresh_hud() -> void:
 	var snake = local_snake()
-	var score: int = snake.score if snake != null else 0
-	# Watching the number rather than the pickup covers every case at once:
-	# solo, host, and a client whose points are decided on another machine.
-	if state == State.PLAY and _score_on_bar >= 0 and score != _score_on_bar:
-		_hud.announce_score(score - _score_on_bar)
-	_score_on_bar = score
+	var length: float = snake.target_body_length if snake != null and snake.alive else 0.0
+	# Watching the length rather than the pickup covers every case at once:
+	# solo, host, and a client whose growth is decided on another machine.
+	# A death is announced by itself, so only gains are called out here.
+	if state == State.PLAY and _length_on_bar >= 0.0 and length > _length_on_bar:
+		_hud.announce_score(length - _length_on_bar)
+	_length_on_bar = length
+	if length > _best_length:
+		_best_length = length
+		PlayerProfile.record_length(length)
 	_hud.set_stats(
-		score,
-		maxi(PlayerProfile.high_score(), score),
+		length,
+		maxf(PlayerProfile.best_length(), length),
 		"%s %s" % [_camera.view_name().to_upper(), _camera.mode_name()]
 	)
+	_hud.set_clock(game_match.time_left())
 	_hud.set_debug(bool(PlayerProfile.get_preference("debug")))
 	if snake == null:
 		_hud.set_item(0, 0, 0.0, 1.0)
@@ -308,7 +326,9 @@ func _scoreboard() -> Array:
 	ids.sort()
 	for id: int in ids:
 		var snake: SnakeWorld = game_match.snakes[id]
-		rows.append({"id": id, "score": snake.score, "alive": snake.alive})
+		rows.append({
+			"id": id, "length": snake.target_body_length, "alive": snake.alive,
+		})
 	return rows
 
 
@@ -354,16 +374,17 @@ func _on_snake_died(id: int, cause: SnakeWorld.Outcome) -> void:
 		snake.death_position.x, snake.death_position.y, snake.score,
 	])
 	if id == Session.local_id():
+		_length_lost = snake.target_body_length
 		_on_local_death(snake)
 
 
+## Dying is not the end of anything any more: it costs you everything you
+## swallowed and a couple of seconds off the field.
 func _on_local_death(snake: SnakeWorld) -> void:
 	stats["last_score"] = snake.score
 	stats["max_score"] = maxi(int(stats["max_score"]), snake.score)
-	stats["games"] = int(stats["games"]) + 1
-	_last_record = PlayerProfile.record_game(snake.score)
-	if Session.is_online() and game_match.snakes.size() > 1:
-		_start_spectating(snake.death_position)
+	stats["deaths"] = int(stats["deaths"]) + 1
+	_hud.announce_loss(_length_lost)
 
 
 func _on_food_eaten(id: int) -> void:
@@ -415,28 +436,27 @@ func _show_result(winner: int) -> void:
 	_held_turns.clear()
 	_held_fly.clear()
 
+	PlayerProfile.finish_round()
+	stats["games"] = int(stats["games"]) + 1
+	var snake = local_snake()
+	var length: float = _best_length
+	var record := PlayerProfile.record_length(length)
+
 	if Session.is_online():
 		var mine := winner == Session.local_id()
-		var title := "VICTORY" if mine else "DEFEATED"
+		var title := "BIGGEST" if mine else "OUTGROWN"
 		var color := GameConfig.SNAKE_HEAD_COLOR if mine else GameConfig.DANGER_COLOR
 		var subtitle := (
-			"last one standing" if mine
-			else ("%s survived" % _player_name(winner) if winner > 0 else "nobody survived")
+			"nobody grew longer than you" if mine
+			else ("%s grew longer" % _player_name(winner) if winner > 0 else "nobody grew")
 		)
-		var snake = local_snake()
-		_hud.show_result(title, color, subtitle, snake.score if snake != null else 0)
+		_hud.show_result(
+			title, color, subtitle, length, PlayerProfile.best_length(), record
+		)
 	else:
-		var snake = local_snake()
-		var reason := "you bit yourself"
-		if _last_death_cause == SnakeWorld.Outcome.DEAD_ROCK:
-			reason = "you hit a rock"
-		elif snake != null and not snake.is_inside(snake.death_position):
-			reason = "you hit a wall"
 		_hud.show_game_over(
-			reason,
-			snake.score if snake != null else 0,
-			PlayerProfile.high_score(),
-			_last_record
+			"the longest snake you grew",
+			length, PlayerProfile.best_length(), record
 		)
 
 
@@ -452,7 +472,7 @@ func _start_spectating(from: Vector2) -> void:
 # --------------------------------------------------------------------------- #
 func _start_hosting() -> void:
 	if not Session.host():
-		_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), Session.last_error)
+		_hud.show_menu(PlayerProfile.best_length(), PlayerProfile.games_played(), Session.last_error)
 		return
 	_enter_lobby()
 	if _driver != null:
@@ -462,7 +482,7 @@ func _start_hosting() -> void:
 func _join_session(address: String) -> void:
 	Journal.info("game", "Joining %s" % address)
 	if not Session.join(address):
-		_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), Session.last_error)
+		_hud.show_menu(PlayerProfile.best_length(), PlayerProfile.games_played(), Session.last_error)
 		return
 	PlayerProfile.set_preference("address", address)
 	_enter_lobby()
@@ -540,12 +560,13 @@ func _begin_round(
 	# A client takes the host's word for it rather than working it out
 	# again, so nobody plays on a board of their own.
 	_resize_arena(arena if arena != Vector2.ZERO else GameConfig.arena_for(game_match.snakes.size()))
+	game_match.duration = _round_seconds if _round_seconds > 0.0 else GameConfig.ROUND_SECONDS
 	game_match.start()
 	if _start_score > 0:
 		for id: int in game_match.snakes:
 			game_match.snakes[id].add_score(_start_score)
 			game_match.snakes[id].body_length = game_match.snakes[id].target_body_length
-	_score_on_bar = -1
+	_length_on_bar = -1.0
 	if not rocks.is_empty():
 		game_match.set_obstacles(rocks)
 	_board.set_obstacles(game_match.obstacles)
@@ -734,7 +755,7 @@ func _enter_menu(message: String = "") -> void:
 	_held_fly.clear()
 	_hud.set_bar_visible(false)
 	_camera.set_preview(true)
-	_hud.show_menu(PlayerProfile.high_score(), PlayerProfile.games_played(), message)
+	_hud.show_menu(PlayerProfile.best_length(), PlayerProfile.games_played(), message)
 	_hud.set_address(str(PlayerProfile.get_preference("address")))
 
 
@@ -955,8 +976,8 @@ func request_quit(reason: String) -> void:
 			"PASS" if failures.is_empty() else "FAIL", _driver.summary(self),
 		])
 
-	Journal.info("game", "Session finished: reason=%s games=%d best=%d steps=%d frames=%d fps=%.1f slow=%d errors=%s" % [
-		reason, stats["games"], stats["max_score"], stats["steps"],
+	Journal.info("game", "Session finished: reason=%s rounds=%d longest=%.1f steps=%d frames=%d fps=%.1f slow=%d errors=%s" % [
+		reason, stats["games"], _best_length, stats["steps"],
 		stats["frames"], stats["fps"], stats["slow_frames"],
 		"none" if stats["errors"].is_empty() else str(stats["errors"]),
 	])

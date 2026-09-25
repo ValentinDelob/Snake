@@ -38,6 +38,8 @@ var running := false
 var over := false
 var winner_id := -1
 var elapsed := 0.0
+var duration := GameConfig.ROUND_SECONDS
+var _respawn_at: Dictionary = {}       # id -> when it comes back
 
 var _rng := RandomNumberGenerator.new()
 var _next_bolt_at := 0.0
@@ -92,6 +94,7 @@ func start() -> void:
 	over = false
 	winner_id = -1
 	elapsed = 0.0
+	_respawn_at = {}
 	ground = []
 	_next_bolt_at = _rng.randf_range(
 		GameConfig.BOOST_FIRST_SPAWN.x, GameConfig.BOOST_FIRST_SPAWN.y
@@ -353,6 +356,7 @@ func step(delta: float) -> void:
 			_check_ground(id, snake)
 
 	_update_spawns()
+	_respawn_dead()
 	_check_end()
 
 
@@ -449,20 +453,79 @@ func _update_spawns() -> void:
 		drop(SnakeWorld.Ground.PHASE)
 
 
-## The round is over when at most one snake is left standing.
+## Seconds left on the clock.
+func time_left() -> float:
+	return maxf(0.0, duration - elapsed)
+
+
+## The biggest snake on the field, which is the only thing being played for.
+func longest_id() -> int:
+	var best := -1
+	var best_length := -1.0
+	for id: int in snakes:
+		var snake: SnakeWorld = snakes[id]
+		if snake.target_body_length > best_length:
+			best_length = snake.target_body_length
+			best = id
+	return best
+
+
+## Nobody is knocked out: a snake that dies is out of the field for a
+## couple of seconds and comes back small, wherever there is room.
+func _respawn_dead() -> void:
+	var index := 0
+	var ids: Array = snakes.keys()
+	ids.sort()
+	for id: int in ids:
+		var snake: SnakeWorld = snakes[id]
+		if snake.alive:
+			continue
+		if not _respawn_at.has(id):
+			_respawn_at[id] = elapsed + GameConfig.RESPAWN_DELAY
+		elif elapsed >= float(_respawn_at[id]):
+			_respawn_at.erase(id)
+			var spot := free_spot(GameConfig.SNAKE_RADIUS + 1.5, 6.0)
+			snake.reset(spot, open_heading(spot))
+		index += 1
+
+
+## Which way to face from a given spot: the direction with the most open
+## floor ahead of it. Coming back only to drive into the nearest rock is
+## not a second chance, it is the same death twice.
+func open_heading(from: Vector2) -> float:
+	var best := _rng.randf_range(-PI, PI)
+	var best_room := -1.0
+	for index in range(12):
+		var heading := TAU * index / 12.0
+		var direction := Vector2(cos(heading), sin(heading))
+		var room := 0.0
+		while room < GameConfig.OBSTACLE_LANE_LENGTH:
+			var point := from + direction * (room + 1.0)
+			if not _inside(point) or blocked_by_obstacle(point, GameConfig.SNAKE_RADIUS + 0.5):
+				break
+			room += 1.0
+		if room > best_room:
+			best_room = room
+			best = heading
+	return best
+
+
+func _inside(point: Vector2) -> bool:
+	var margin := GameConfig.SNAKE_RADIUS + 0.5
+	return (
+		point.x >= margin and point.x <= width - margin
+		and point.y >= margin and point.y <= height - margin
+	)
+
+
+## The round is over when the clock runs out. The longest snake takes it.
 func _check_end() -> void:
-	var alive := alive_ids()
-	if snakes.size() > 1:
-		if alive.size() <= 1:
-			over = true
-			running = false
-			winner_id = alive[0] if alive.size() == 1 else -1
-			finished.emit(winner_id)
-	elif alive.is_empty():
-		over = true
-		running = false
-		winner_id = -1
-		finished.emit(-1)
+	if elapsed < duration:
+		return
+	over = true
+	running = false
+	winner_id = longest_id()
+	finished.emit(winner_id)
 
 
 # --------------------------------------------------------------------------- #

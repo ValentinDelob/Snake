@@ -13,7 +13,7 @@ extends RefCounted
 ## Injected key events go through the normal input pipeline, so the test
 ## exercises the same code path as a player.
 
-enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, GHOST, PAUSE, FINISH }
+enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, GHOST, PAUSE, FINISH, WAIT }
 
 const PAUSE_FRAMES := 30
 const MIN_ACCEPTABLE_FPS := 25.0
@@ -85,6 +85,11 @@ var ghost_fired := false
 var ghost_passed_through := false
 var _ghost_requested := false
 var _ghost_curling := false
+
+## dying costs a snake its length, not its round
+var respawned := false
+var round_ended := false
+var _was_alive := true
 
 ## the arena the round was played on
 var arena_seen := Vector2.ZERO
@@ -253,6 +258,8 @@ func _network_frame(game) -> void:
 		var mine = game.local_snake()
 		if mine != null and not mine.alive:
 			died_locally = true
+		elif died_locally and mine != null and mine.alive:
+			respawned = true
 
 		# Whoever is told to let go first loses: that is how the test gets a
 		# winner without two machines fighting over it.
@@ -309,15 +316,32 @@ func _on_menu(game) -> void:
 		release(KEY_ENTER)
 
 
+## True while the local snake is on the field.
+func snake_alive(game) -> bool:
+	var snake = game.local_snake()
+	return snake != null and snake.alive
+
+
 func _on_play(game) -> void:
 	var rig: CameraRig = game.camera_rig()
 	views_seen[rig.view_name()] = true
 	cameras_seen[rig.mode_name()] = true
 
 	var now: float = game.play_time()
-	if now < _phase_started:
-		_phase_started = 0.0
+	var alive: bool = snake_alive(game)
+	if _was_alive and not alive:
+		# The snake was lost. The round carries on without it, but whatever
+		# this phase was holding has to be let go of. The cause is only
+		# readable here now: nothing shows a game over screen any more.
+		if game.last_death_cause() == SnakeWorld.Outcome.DEAD_ROCK and not rock_death:
+			rock_death = true
+			Journal.info("selftest", "the snake died on a rock")
+		_phase_started = now
 		_on_round_restart(game)
+	elif alive and not _was_alive:
+		respawned = true
+		Journal.info("selftest", "snake came back after dying")
+	_was_alive = alive
 	if now < 1.0:
 		_survey_rocks(game)
 	_watch_world(game, now)
@@ -343,6 +367,8 @@ func _on_play(game) -> void:
 			_run_pause()
 		Phase.FINISH:
 			_run_finish(game, now)
+		Phase.WAIT:
+			pass        # the bot plays on until the clock runs out
 
 
 ## Look over the rocks this round was given: how many, how varied, and
@@ -371,15 +397,22 @@ func _survey_rocks(game) -> void:
 					Journal.warn("selftest", "a rock blocks the lane of player %d" % id)
 
 
-## The last phase: lay a rock right in the snake's path and drive into it,
-## so the round ends on a collision the test asked for rather than a wall.
+## The last of the scripted phases: lay a rock right in the snake's path
+## and drive into it, then watch it come back, because dying is no longer
+## the end of anything.
 func _run_finish(game, now: float) -> void:
 	var snake = game.local_snake()
-	if snake == null:
+	if snake == null or not snake.alive:
+		return
+	if rock_death:
+		if respawned and game.agent == null:
+			game.agent = _saved_agent
+			_enter_phase(Phase.WAIT, now)
 		return
 	if not _rock_dropped or now - _rock_dropped_at > 8.0:
 		if not _has_room(snake):
 			return
+		_saved_agent = game.agent
 		game.game_match.place_obstacle(_ahead_of(snake), 1.4)
 		_rock_dropped = true
 		_rock_dropped_at = now
@@ -387,6 +420,11 @@ func _run_finish(game, now: float) -> void:
 	if game.agent != null:
 		Journal.info("selftest", "releasing the bot, straight into the rock")
 		game.agent = null
+		return
+	if rock_death and respawned:
+		Journal.info("selftest", "back on the field: waiting for the clock")
+		game.agent = _saved_agent
+		_enter_phase(Phase.WAIT, now)
 
 
 ## A death can land in the middle of a phase: undo whatever that phase was
@@ -399,14 +437,18 @@ func _on_round_restart(game) -> void:
 		game.agent = _saved_agent
 		_turn_phase = 0
 		_turn_waiting_since = -1.0
-	if phase == Phase.BOOST and multiplier_after_boost < 0.0:
+	# A death ends whatever effect was running, so a phase interrupted by
+	# one has to start over rather than write down what it half measured.
+	if phase == Phase.BOOST and max_multiplier < GameConfig.BOOST_FACTOR - 0.05:
 		_bolt_requested = false
 		boost_fired = false
+		multiplier_after_boost = -1.0
 	if phase == Phase.CRATE_BONUS and not crate_bonus_in_slot:
 		_bonus_crate_requested = false
-	if phase == Phase.CRATE_MALUS and multiplier_after_slow < 0.0:
+	if phase == Phase.CRATE_MALUS and min_multiplier > GameConfig.SLOW_FACTOR + 0.05:
 		_malus_crate_requested = false
 		_slow_started_at = -1.0
+		multiplier_after_slow = -1.0
 	if phase == Phase.SCORE_UP and score_card_gain == 0:
 		_gain_crate_requested = false
 	if phase == Phase.SCORE_DOWN and not score_floor_held:
@@ -541,6 +583,8 @@ func _run_turns(game, now: float) -> void:
 ## Drop a bolt, let the bot fetch it, fire it and watch the speed ramp.
 func _run_boost(game, now: float) -> void:
 	var snake = game.local_snake()
+	if snake == null or not snake.alive:
+		return        # a boost cut short by a death proves nothing
 	if not _bolt_requested:
 		Journal.info("selftest", "dropping a speed bolt in the snake's path")
 		game.game_match.drop_at(SnakeWorld.Ground.BOLT, _ahead_of(snake))
@@ -591,6 +635,8 @@ func _run_crate_bonus(game, now: float) -> void:
 ## A crate rigged to hold the curse: it must apply itself, with no choice.
 func _run_crate_malus(game, now: float) -> void:
 	var snake = game.local_snake()
+	if snake == null or not snake.alive:
+		return
 	if not _malus_crate_requested:
 		Journal.info("selftest", "dropping a crate rigged with the slow down in the path")
 		game.game_match.drop_at(
@@ -857,26 +903,21 @@ func _on_pause(game) -> void:
 		_enter_phase(Phase.FINISH, game.play_time())
 
 
+## The round is over when the clock says so, whoever is alive.
 func _on_gameover(game) -> void:
 	if _finished:
 		return
-	if not rock_death and game.last_death_cause() == SnakeWorld.Outcome.DEAD_ROCK:
-		rock_death = true
-		Journal.info("selftest", "the snake died on a rock")
-	if phase == Phase.FINISH and rock_death and int(game.stats["games"]) >= 2:
-		Journal.info("selftest", "quitting from the game over screen")
-		_finished = true
-		press(KEY_ESCAPE)
-		return
-	if _retries >= MAX_RETRIES:
-		Journal.warn("selftest", "too many retries, stopping here")
-		_finished = true
-		press(KEY_ESCAPE)
-		return
-	_retries += 1
-	Journal.info("selftest", "retrying (round %d, phase %s)" % [_retries, Phase.keys()[phase]])
-	press(KEY_R)
-	release(KEY_R)
+	round_ended = true
+	Journal.info("selftest", "clock ran out, longest snake was %.1f units" % _longest_length(game))
+	_finished = true
+	press(KEY_ESCAPE)
+
+
+func _longest_length(game) -> float:
+	var best := 0.0
+	for id: int in game.game_match.snakes:
+		best = maxf(best, game.game_match.snakes[id].target_body_length)
+	return best
 
 
 # --------------------------------------------------------------------------- #
@@ -893,13 +934,13 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
 		str(quality_faces), fps_limits_seen.size(), vsync_states_seen.size(),
 		debug_fps_shown, debug_hidden,
-		ghost_collected, ghost_fired, ghost_passed_through,
+		ghost_collected, ghost_fired, ghost_passed_through, respawned, round_ended,
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
@@ -945,8 +986,8 @@ func _verify_network() -> Array:
 		failures.append("the round never ended")
 	elif winner_id <= 0:
 		failures.append("the round ended without a winner")
-	if died_locally and not spectated:
-		failures.append("dying did not put this player into the spectator camera")
+	if died_locally and not respawned:
+		failures.append("a snake that died never came back")
 	var floor_count := SnakeMatch.minimum_rocks(peers_seen)
 	var wanted_arena := GameConfig.arena_for(peers_seen)
 	if arena_seen.distance_to(wanted_arena) > 0.1:
@@ -1042,6 +1083,10 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the clear lane shrank to %.1f units" % lane_kept)
 	if not rock_death:
 		failures.append("driving into a rock did not kill the snake")
+	if not respawned:
+		failures.append("a snake that died never came back")
+	if not round_ended:
+		failures.append("the round never ended on the clock")
 
 	var card: int = GameConfig.SCORE_CARD_POINTS
 	var per_point: float = GameConfig.GROWTH_PER_FOOD
@@ -1073,8 +1118,6 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the bot never scored a point")
 	elif not _growth_observed:
 		failures.append("the body jumped to its new length instead of growing into it")
-	if int(stats["games"]) < 2:
-		failures.append("expected 2 finished games, got %d" % int(stats["games"]))
 	return failures
 
 
