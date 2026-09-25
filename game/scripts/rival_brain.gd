@@ -21,6 +21,7 @@ var _spit_cooldown := 0.0
 ## What it did this round, for the log and the self-test.
 var boosts_fired := 0
 var ghosts_fired := 0
+var shears_fired := 0
 var spits := 0
 
 
@@ -70,6 +71,11 @@ func _use_items(game_match: SnakeMatch, world: SnakeWorld, delta: float) -> void
 			if _agent.body_ahead(game_match, world) and world.use_item():
 				ghosts_fired += 1
 				Journal.info("rival", "%s fired the ghost ring through a body" % name)
+		SnakeWorld.Item.SHEARS:
+			# Blades are drawn when there is a body to put them through.
+			if _agent.body_within(game_match, world, GameConfig.RIVAL_SHEARS_REACH) and world.use_item():
+				shears_fired += 1
+				Journal.info("rival", "%s drew the crystal shears" % name)
 		_:
 			_boost_wait = -1.0
 

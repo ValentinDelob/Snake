@@ -57,6 +57,9 @@ fermer la fenêtre proprement.
 | `--profile` | mesure les images, sans synchronisation verticale |
 | `--profile-capped` | même mesure, dans les conditions réelles du joueur |
 
+En mode `--demo`, trois touches posent un objet : **B** un éclair, **N** une
+caisse (tour à tour bonus et malus), **K** des ciseaux juste devant vous.
+
 ## L'auto-test
 
 C'est le filet de sécurité principal. Il **joue vraiment** : il injecte de

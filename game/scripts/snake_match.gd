@@ -10,6 +10,8 @@ extends RefCounted
 signal snake_died(id: int, cause: SnakeWorld.Outcome)
 signal food_eaten(id: int)
 signal matter_spat(id: int, amount: float)
+## A snake running the shears sliced another one.
+signal snake_cut(cutter_id: int, victim_id: int, matter: float, at: Vector2)
 signal item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 signal finished(winner_id: int)
 
@@ -48,6 +50,9 @@ var _rng := RandomNumberGenerator.new()
 var _next_bolt_at := 0.0
 var _next_mystery_at := 0.0
 var _next_phase_at := 0.0
+var _next_shears_at := 0.0
+## Who cut whom last, and until when they may not do it again.
+var _recut_until: Dictionary = {}     # Vector2i(cutter, victim) -> time
 var _forced_roll: SnakeWorld.Item = SnakeWorld.Item.NONE
 var _gap := GameConfig.OBSTACLE_GAP
 
@@ -108,6 +113,10 @@ func start() -> void:
 	_next_phase_at = _rng.randf_range(
 		GameConfig.PHASE_FIRST_SPAWN.x, GameConfig.PHASE_FIRST_SPAWN.y
 	)
+	_next_shears_at = _rng.randf_range(
+		GameConfig.SHEARS_FIRST_SPAWN.x, GameConfig.SHEARS_FIRST_SPAWN.y
+	)
+	_recut_until = {}
 
 	var ids: Array = snakes.keys()
 	ids.sort()
@@ -440,10 +449,45 @@ func _check_bite(id: int, snake: SnakeWorld) -> void:
 		if not other.alive:
 			continue
 		if other.hits_body(snake.head_position, 0.0):
+			if snake.cutting():
+				# The shears: the body gives way instead of the head.
+				cut(id, other_id)
+				continue
 			snake.kill(snake.head_position)
 			decompose(snake)
 			snake_died.emit(id, SnakeWorld.Outcome.DEAD_OTHER)
 			return
+
+
+## Slice `victim` where the head of `cutter` touches it. What was behind the
+## cut drops as gems along the part that fell off; the victim keeps its head
+## and the rest. Returns the matter that fell, zero when nothing was cut.
+func cut(cutter_id: int, victim_id: int) -> float:
+	var cutter: SnakeWorld = snakes.get(cutter_id)
+	var victim: SnakeWorld = snakes.get(victim_id)
+	if cutter == null or victim == null or not victim.alive:
+		return 0.0
+	var pair := Vector2i(cutter_id, victim_id)
+	if elapsed < float(_recut_until.get(pair, -1.0)):
+		return 0.0
+	# Where along the victim the blade went in: the body point nearest the
+	# head that did the cutting.
+	var points := victim.body_points()
+	var nearest := 0
+	var best := INF
+	for index in range(points.size()):
+		var distance := cutter.head_position.distance_squared_to(points[index])
+		if distance < best:
+			best = distance
+			nearest = index
+	var result := victim.sever(GameConfig.SEGMENT_SPACING * (nearest + 1))
+	if result.is_empty():
+		return 0.0
+	_recut_until[pair] = elapsed + GameConfig.SHEARS_RECUT
+	var matter: float = result["matter"]
+	_scatter_matter(result["points"], matter, 0)
+	snake_cut.emit(cutter_id, victim_id, matter, cutter.head_position)
+	return matter
 
 
 func _check_food(id: int, snake: SnakeWorld) -> void:
@@ -485,6 +529,12 @@ func _check_ground(id: int, snake: SnakeWorld) -> void:
 			_next_phase_at = elapsed + _rng.randf_range(
 				GameConfig.PHASE_RESPAWN.x, GameConfig.PHASE_RESPAWN.y
 			)
+		elif item["kind"] == SnakeWorld.Ground.SHEARS:
+			roll = SnakeWorld.Item.SHEARS
+			snake.carried = SnakeWorld.Item.SHEARS
+			_next_shears_at = elapsed + _rng.randf_range(
+				GameConfig.SHEARS_RESPAWN.x, GameConfig.SHEARS_RESPAWN.y
+			)
 		else:
 			roll = _roll_mystery()
 			match roll:
@@ -524,6 +574,8 @@ func _update_spawns() -> void:
 		drop(SnakeWorld.Ground.MYSTERY)
 	if not has_ground(SnakeWorld.Ground.PHASE) and elapsed >= _next_phase_at:
 		drop(SnakeWorld.Ground.PHASE)
+	if not has_ground(SnakeWorld.Ground.SHEARS) and elapsed >= _next_shears_at:
+		drop(SnakeWorld.Ground.SHEARS)
 
 
 ## Seconds left on the clock.
@@ -608,6 +660,8 @@ static func _ground_radius(kind: SnakeWorld.Ground) -> float:
 			return GameConfig.BOOST_RADIUS
 		SnakeWorld.Ground.PHASE:
 			return GameConfig.PHASE_RADIUS
+		SnakeWorld.Ground.SHEARS:
+			return GameConfig.SHEARS_RADIUS
 		_:
 			return GameConfig.MYSTERY_RADIUS
 

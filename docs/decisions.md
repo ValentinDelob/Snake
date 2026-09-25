@@ -129,6 +129,21 @@ mode compatibilité reste disponible en repli. Le plantage était intermittent
 et n'a jamais pu être reproduit à la demande : c'est une atténuation, pas une
 correction prouvée.
 
+## Les ciseaux coupent, ils ne tuent pas
+
+Le premier objet offensif a été choisi pour créer des duels sans revenir à
+l'élimination. Les ciseaux **tranchent** un corps au lieu de tuer son
+propriétaire : la victime garde sa tête, perd ce qui était derrière la coupe,
+et cette matière tombe au sol pour tout le monde. Cela respecte les deux
+règles de fond : la matière n'est jamais détruite, et personne n'est éliminé.
+Rejeté : des ciseaux qui tuent, qui auraient fait d'un objet rare une
+exécution.
+
+Une coupe par passage (0,6 s entre deux coupes du même couple), sinon une
+tête posée sur le moignon grignoterait le corps en entier en une fraction de
+seconde. Le corps de celui qui coupe reste solide : les ciseaux attaquent, ils
+ne protègent pas — c'est ce qui les distingue de l'anneau fantôme.
+
 ## Les rivaux sont des joueurs, pas des obstacles
 
 Le solo manquait d'adversaire alors que le jeu savait faire tourner

@@ -14,10 +14,10 @@ extends RefCounted
 enum Outcome { MOVING, DEAD_WALL, DEAD_SELF, DEAD_OTHER, DEAD_ROCK }
 
 ## What an item does once it takes effect.
-enum Item { NONE, SPEED, SLOW, SCORE_UP, SCORE_DOWN, PHASE }
+enum Item { NONE, SPEED, SLOW, SCORE_UP, SCORE_DOWN, PHASE, SHEARS }
 
 ## What can be lying on the arena.
-enum Ground { BOLT, MYSTERY, PHASE }
+enum Ground { BOLT, MYSTERY, PHASE, SHEARS }
 
 ## Distance the head must travel before the path records another point.
 const PATH_SAMPLE := 0.06
@@ -297,6 +297,8 @@ func start_effect(kind: Item) -> void:
 			effect_time_left = GameConfig.SLOW_DURATION
 		Item.PHASE:
 			effect_time_left = GameConfig.PHASE_DURATION
+		Item.SHEARS:
+			effect_time_left = GameConfig.SHEARS_DURATION
 		_:
 			return
 	effect = kind
@@ -313,6 +315,44 @@ func phase_intensity() -> float:
 	if not phasing():
 		return 0.0
 	return clampf(effect_time_left / GameConfig.PHASE_DURATION, 0.0, 1.0)
+
+
+## While this runs the head slices through other snakes instead of dying
+## on them.
+func cutting() -> bool:
+	return effect == Item.SHEARS and effect_time_left > 0.0
+
+
+## How much of the blade shows: bright when fired, fading with the effect.
+func cut_intensity() -> float:
+	if not cutting():
+		return 0.0
+	return clampf(0.35 + 0.65 * effect_time_left / GameConfig.SHEARS_DURATION, 0.0, 1.0)
+
+
+## Cut the body `at_distance` behind the head: everything further back is
+## gone at once, and the score drops to what the part that is left is worth.
+## A cut closer to the head than a newborn snake is long still leaves it
+## that long. Returns the points the lost part covered and the matter it
+## held, so the match can drop it on the floor; an empty dictionary means
+## there was nothing behind the cut.
+func sever(at_distance: float) -> Dictionary:
+	var keep := maxf(GameConfig.START_BODY_LENGTH, at_distance)
+	if keep >= body_length - 0.2 or score <= 0.0:
+		return {}
+	var points := body_points()
+	var from := mini(int(keep / GameConfig.SEGMENT_SPACING), points.size() - 1)
+	var lost_part := points.slice(from)
+	var kept_score := maxf(0.0, (keep - GameConfig.START_BODY_LENGTH) / GameConfig.GROWTH_PER_FOOD)
+	var matter := score - kept_score
+	if matter <= 0.0:
+		return {}
+	add_score(-matter)
+	# A cut is a cut: the tail does not shrink back in, it is simply gone.
+	body_length = target_body_length
+	_trim_path()
+	_points_dirty = true
+	return {"points": lost_part, "matter": matter}
 
 
 func boosting() -> bool:

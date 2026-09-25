@@ -152,6 +152,18 @@ var bursts_seen := 0
 var peak_trauma := 0.0
 var effects_states := {}
 var effects_follow := true
+
+## the crystal shears: deadly crossing without, clean cut with, the matter
+## all on the floor, one cut per pass, and fired for real from the slot
+var shears_deadly_without := false
+var shears_cut := false
+var shears_matter := 0.0
+var shears_conserved := false
+var shears_kept := 0.0
+var shears_recut_blocked := false
+var shears_fired_live := false
+var shears_bar_text := ""
+var _shears_stage := 0
 ## debug readout: the frame rate it showed, and whether it went away again
 var debug_fps_shown := 0
 var debug_hidden := false
@@ -669,6 +681,7 @@ func _check_display_settings(game) -> void:
 	Journal.info("selftest", "display settings walked: limits %s, vsync %s" % [
 		str(fps_limits_seen), str(vsync_states_seen.keys()),
 	])
+	_check_shears_rule()
 	# The effects setting, walked both ways and back to where it was.
 	var fx: FxLayer = game.board_view().fx()
 	for _index in range(2):
@@ -1003,6 +1016,83 @@ func _check_phase_rule() -> void:
 	])
 
 
+## The shears, judged on the rules rather than by driving: lay a long snake
+## straight across an empty arena, put another head right on its body, and
+## see what that crossing does with and without the blades.
+func _check_shears_rule() -> void:
+	var arena := SnakeMatch.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, 7)
+	var victim := arena.add_snake(2)
+	victim.reset(Vector2(12.0, 28.0), 0.0)
+	victim.add_score(20.0)
+	# Let it grow into its length along a straight line.
+	for _step in range(1400):
+		victim.advance(GameConfig.SIM_STEP)
+	var points := victim.body_points()
+	if victim.body_length < victim.target_body_length - 0.01 or points.size() < 20:
+		Journal.warn("selftest", "could not lay a long snake out for the shears")
+		return
+	var cut_point: Vector2 = points[points.size() / 2]
+	var cutter := arena.add_snake(1)
+	cutter.reset(cut_point, PI * 0.5)
+
+	# Without the blades, that head is dead.
+	arena._check_bite(1, cutter)
+	shears_deadly_without = not cutter.alive
+
+	cutter.reset(cut_point, PI * 0.5)
+	cutter.start_effect(SnakeWorld.Item.SHEARS)
+	var score_before := victim.score
+	var worth_before := _worth_of(arena)
+	arena._check_bite(1, cutter)
+	shears_matter = score_before - victim.score
+	var fell := _worth_of(arena) - worth_before
+	shears_cut = cutter.alive and victim.alive and shears_matter > 1.0
+	shears_conserved = absf(fell - shears_matter) < 0.01
+	shears_kept = victim.body_length
+	# The same crossing straight away is the same cut, not a second one.
+	shears_recut_blocked = arena.cut(1, 2) == 0.0
+	Journal.info("selftest", "shears rule: %s without, cut %.1f of %.1f with (%.1f fell, body now %.1f), recut blocked %s" % [
+		"deadly" if shears_deadly_without else "harmless", shears_matter, score_before,
+		fell, shears_kept, shears_recut_blocked,
+	])
+
+
+static func _worth_of(arena: SnakeMatch) -> float:
+	var total := 0.0
+	for value: float in arena.food_value:
+		total += value
+	return total
+
+
+## Hand our own snake the shears once the scripted phases are over and fire
+## them with the space bar: the slot, the effect and the bar have to agree.
+func _check_shears_live(game) -> void:
+	var snake = game.local_snake()
+	if snake == null or not snake.alive:
+		return
+	match _shears_stage:
+		0:
+			if snake.effect == SnakeWorld.Item.NONE and snake.carried == SnakeWorld.Item.NONE:
+				snake.carried = SnakeWorld.Item.SHEARS
+				_shears_stage = 1
+		1:
+			press(KEY_SPACE)
+			release(KEY_SPACE)
+			_shears_stage = 2
+		2:
+			if snake.cutting():
+				shears_fired_live = true
+				_shears_stage = 3
+			elif snake.carried != SnakeWorld.Item.SHEARS:
+				_shears_stage = 0
+		3:
+			# The key fired the shears at the start of the last frame, before
+			# the bar was drawn: it is read one frame later.
+			shears_bar_text = game.hud()._boost_label.text
+			Journal.info("selftest", "shears fired from the slot: bar says '%s'" % shears_bar_text)
+			_shears_stage = 4
+
+
 ## Bringing matter back up: a snake with nothing much inside it must not
 ## be able to, and one that is full must lose exactly a tenth of it onto
 ## the floor, where it can be eaten again.
@@ -1112,6 +1202,9 @@ func _watch_rivals(game, now: float) -> void:
 	# over, so nothing done to a rival here can disturb them.
 	if phase == Phase.WAIT and not rivals.is_empty():
 		_check_rival_rules(game, now)
+	# Our own shears go last, once the rivals have been judged.
+	if phase == Phase.WAIT and (rivals.is_empty() or _rival_stage == 3):
+		_check_shears_live(game)
 
 
 func _bar_lists_rivals(game) -> bool:
@@ -1279,7 +1372,7 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) rivals(%d/%d, offered=%d, moved=%d, ate=%d, named=%s, boost=%s, spit=%.0f%%, result=%s) look(sky=%s, effects=%d/%s, bursts=%d, shake=%.2f) arena=%.0fx%.0f games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) rivals(%d/%d, offered=%d, moved=%d, ate=%d, named=%s, boost=%s, spit=%.0f%%, result=%s) shears(deadly=%s, cut=%.1f, conserved=%s, kept=%.1f, recut_blocked=%s, live=%s) look(sky=%s, effects=%d/%s, bursts=%d, shake=%.2f) arena=%.0fx%.0f games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
@@ -1294,7 +1387,9 @@ func summary(game) -> String:
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
 		rivals_seen, rivals_expected, rival_counts_offered.size(), rivals_moved.size(),
 		rivals_grew.size(), rivals_named, rival_boost_rule, rival_spit_share * 100.0,
-		rival_result_title, sky_seen, effects_states.size(), effects_follow, bursts_seen,
+		rival_result_title, shears_deadly_without, shears_matter, shears_conserved, shears_kept,
+		shears_recut_blocked, shears_fired_live,
+		sky_seen, effects_states.size(), effects_follow, bursts_seen,
 		peak_trauma, arena_seen.x, arena_seen.y,
 		stats["games"], stats["max_score"], stats["steps"], stats["frames"], stats["fps"],
 	]
@@ -1423,6 +1518,7 @@ func _verify_solo(stats: Dictionary) -> Array:
 
 	failures.append_array(_verify_rivals())
 	failures.append_array(_verify_look())
+	failures.append_array(_verify_shears())
 	var field := 1 + maxi(0, rivals_expected)
 	if arena_seen.distance_to(GameConfig.arena_for(field)) > 0.1:
 		failures.append("solo arena was %.0fx%.0f, expected %.0fx%.0f for %d snakes" % [
@@ -1520,6 +1616,25 @@ func _verify_solo(stats: Dictionary) -> Array:
 func _watch_look(game) -> void:
 	bursts_seen = game.board_view().fx().bursts_played()
 	peak_trauma = maxf(peak_trauma, game.camera_rig().trauma())
+
+
+func _verify_shears() -> Array:
+	var failures: Array = []
+	if not shears_deadly_without:
+		failures.append("a head on another body survived without the shears")
+	if not shears_cut:
+		failures.append("the shears did not cut the body they went through (%.1f)" % shears_matter)
+	elif not shears_conserved:
+		failures.append("a cut spilled matter that did not all land on the floor")
+	if shears_cut and shears_kept >= GameConfig.START_BODY_LENGTH + 20.0 - 0.5:
+		failures.append("the cut snake kept its whole body (%.1f)" % shears_kept)
+	if not shears_recut_blocked:
+		failures.append("one pass of the shears cut the same body twice")
+	if not shears_fired_live:
+		failures.append("the shears in the slot never fired from the space bar")
+	elif not shears_bar_text.begins_with("SHEARS"):
+		failures.append("the bar said '%s' while cutting" % shears_bar_text)
+	return failures
 
 
 func _verify_look() -> Array:

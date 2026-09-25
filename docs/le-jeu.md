@@ -94,7 +94,8 @@ passages entre les rochers, et ne peut plus esquiver au dernier moment.
 
 ## Les objets
 
-Trois objets apparaissent au sol, en plus de la matière.
+Quatre objets apparaissent au sol, en plus de la matière. Un seul peut être
+rangé à la fois dans l'emplacement.
 
 ### L'éclair de vitesse
 
@@ -129,6 +130,36 @@ Il se range dans l'emplacement et se déclenche avec **ESPACE**. Pendant
 n'importe quel corps**, le sien comme celui des autres. Les murs et les
 rochers restent solides, et son propre corps reste solide pour les autres :
 l'anneau ouvre un passage, il ne rend pas inoffensif.
+
+### Les ciseaux de cristal
+
+**Rares** : les premiers apparaissent entre 25 et 45 secondes de manche, les
+suivants entre 45 et 75. Deux lames de verre cyan croisées, plus grandes que
+les autres objets, qui s'ouvrent et se ferment en tournant sur elles-mêmes.
+
+Ils se rangent dans l'emplacement et se déclenchent avec **ESPACE**. Pendant
+**4 secondes**, le serpent devient de verre cyan, laisse une traînée
+d'étincelles, et le bandeau affiche `SHEARS` avec le temps restant.
+
+- Toucher le corps d'un autre serpent ne tue plus : **on le tranche**. La
+  victime garde sa tête et la partie avant ; tout ce qui était derrière la
+  coupe retombe en gemmes le long du morceau perdu. Rien n'est détruit, la
+  victime n'est pas tuée.
+- Une coupe au ras de la tête laisse la victime à sa taille de départ.
+- Un même passage ne coupe qu'une fois : le même couple ne peut pas se
+  retrancher avant **0,6 seconde**. Traverser un corps en longeant la coupe
+  entame donc la suite, morceau par morceau.
+- Les murs, les rochers et son propre corps restent mortels, et le corps de
+  celui qui coupe reste solide pour les autres.
+- Une coupe se voit et se sent : gerbe aux couleurs de la victime, onde de
+  choc cyan, secousse de caméra pour la victime (et une plus petite pour
+  celui qui coupe), et la perte s'affiche en rouge à côté de `LENGTH`.
+- C'est le premier objet qui **nuit à quelqu'un d'autre** : le plus gros
+  serpent du terrain devient une cible qu'on peut vraiment entamer.
+
+Les rivaux vont chercher les ciseaux quand ils en voient, les sortent dès
+qu'un autre corps passe à moins de 9 unités de leur tête, puis foncent sur
+le corps le plus proche au lieu de l'éviter.
 
 ## Les rivaux
 

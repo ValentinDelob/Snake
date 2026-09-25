@@ -39,8 +39,22 @@ func _target(world: SnakeWorld) -> Vector2:
 	if _match == null:
 		return world.head_position + world.direction() * 10.0
 
+	# Blades out: go for the nearest body that is not ours. That is where
+	# the matter is now, and the shears only last a few seconds.
+	if world.cutting():
+		var prey := _nearest_body(world)
+		if prey != Vector2.INF:
+			return prey
+
 	var best: Vector2 = _nearest_pellet(world)
 	var best_distance: float = world.head_position.distance_to(best) * 1.6
+
+	# The shears are nearly as rare as the ring, and far more dangerous in
+	# anybody else's slot.
+	if world.carried == SnakeWorld.Item.NONE and _match.has_ground(SnakeWorld.Ground.SHEARS):
+		var shears: Vector2 = _match.ground_position(SnakeWorld.Ground.SHEARS)
+		if world.head_position.distance_to(shears) < best_distance * 3.0:
+			return shears
 
 	# The ghost ring is the rarest thing on the field and the only one worth
 	# crossing it for, so it outranks everything else.
@@ -73,6 +87,26 @@ func _nearest_pellet(world: SnakeWorld) -> Vector2:
 		if distance < best_distance:
 			best_distance = distance
 			best = pellet
+	return best
+
+
+## The closest point on another living snake's body, within reach of the
+## shears while they last. Vector2.INF when nobody is close enough.
+func _nearest_body(world: SnakeWorld) -> Vector2:
+	var reach: float = GameConfig.SNAKE_SPEED * world.speed_multiplier * world.effect_time_left
+	var best := Vector2.INF
+	var best_distance := reach * reach
+	for id: int in _match.snakes:
+		var other: SnakeWorld = _match.snakes[id]
+		if other == world or not other.alive:
+			continue
+		var points := other.body_points()
+		# Every few points is plenty to aim with.
+		for index in range(0, points.size(), 3):
+			var distance := world.head_position.distance_squared_to(points[index])
+			if distance < best_distance:
+				best_distance = distance
+				best = points[index]
 	return best
 
 
@@ -124,8 +158,9 @@ func _blocked(world: SnakeWorld, angle_offset: float, distance: float) -> bool:
 		# A rock stops you as dead as a wall does.
 		if _match != null and _match.blocked_by_obstacle(point, world.radius):
 			return true
-		# Another snake is every bit as solid as your own tail.
-		if _match != null:
+		# Another snake is every bit as solid as your own tail - unless the
+		# shears are out, and then it is the whole point.
+		if _match != null and not world.cutting():
 			for id: int in _match.snakes:
 				var other: SnakeWorld = _match.snakes[id]
 				if other != world and other.alive and other.hits_body(point, 0.0):
@@ -148,3 +183,16 @@ func _room(world: SnakeWorld, angle_offset: float) -> float:
 		if _match != null and _match.blocked_by_obstacle(point, world.radius):
 			break
 	return travelled
+
+
+## Is some other living snake's body within `reach` of the head?
+func body_within(game_match: SnakeMatch, world: SnakeWorld, reach: float) -> bool:
+	for id: int in game_match.snakes:
+		var other: SnakeWorld = game_match.snakes[id]
+		if other == world or not other.alive:
+			continue
+		var points := other.body_points()
+		for index in range(0, points.size(), 3):
+			if world.head_position.distance_to(points[index]) < reach:
+				return true
+	return false

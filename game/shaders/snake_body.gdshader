@@ -23,6 +23,9 @@ uniform float flash : hint_range(0.0, 1.0) = 0.0;
 uniform float phase : hint_range(0.0, 1.0) = 0.0;
 uniform vec3 phase_color : source_color = vec3(1.0, 0.93, 0.36);
 uniform vec3 phase_pale_color : source_color = vec3(1.0, 0.99, 0.82);
+uniform float blade : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 blade_color : source_color = vec3(0.45, 0.95, 1.0);
+uniform vec3 blade_pale_color : source_color = vec3(0.9, 1.0, 1.0);
 uniform float bands = 7.0;
 uniform float band_speed = 2.2;
 uniform float scale_density = 42.0;
@@ -104,6 +107,15 @@ void fragment() {
 		ALBEDO = mix(ALBEDO, ghost, phase * 0.8);
 		emission += ghost * phase * (0.5 + rim * 1.6);
 		ALPHA = mix(1.0, 0.42, phase);
+	}
+	// The crystal shears: the skin turns to cut glass - cold cyan, with sharp
+	// bright facets racing from head to tail - and the head burns brightest,
+	// since that is the edge that does the cutting.
+	if (blade > 0.0) {
+		float facet = pow(max(sin(along * 22.0 - TIME * 14.0 + around * TAU_ * 2.0), 0.0), 16.0);
+		vec3 glass = mix(blade_color, blade_pale_color, facet);
+		ALBEDO = mix(ALBEDO, glass, blade * 0.55);
+		emission += glass * blade * (facet * 1.4 + rim * 0.8) + blade_color * head_mask * blade * 1.1;
 	}
 	EMISSION = emission;
 }

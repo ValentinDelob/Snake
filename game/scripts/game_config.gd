@@ -140,6 +140,19 @@ const PHASE_FIRST_SPAWN := Vector2(35.0, 60.0)   # seconds, min and max
 const PHASE_RESPAWN := Vector2(55.0, 95.0)       # rarer still afterwards
 const PHASE_DURATION := 1.0
 
+## The crystal shears: rare, and the only thing in the game that hurts
+## somebody else. For a few seconds your head slices through other bodies
+## instead of dying on them: whatever is behind the cut falls off as gems,
+## and its owner keeps the rest. Walls, rocks and your own body stay deadly,
+## and your body stays solid for everyone else.
+const SHEARS_RADIUS := 0.6
+const SHEARS_FIRST_SPAWN := Vector2(25.0, 45.0)
+const SHEARS_RESPAWN := Vector2(45.0, 75.0)
+const SHEARS_DURATION := 4.0
+## One pass through a body is one cut: the same pair cannot cut again for
+## this long, or a head lingering on the stump would nibble it away.
+const SHEARS_RECUT := 0.6
+
 const SLOW_DURATION := 5.0
 const SLOW_FACTOR := 0.5
 const SLOW_RAMP_DOWN := 0.5    # seconds to lose the speed
@@ -227,6 +240,8 @@ const RIVAL_BOOST_PATIENCE := Vector2(1.0, 3.5)
 const RIVAL_SPIT_AT := Vector2(45.0, 85.0)
 ## And waits at least this long between two helpings.
 const RIVAL_SPIT_COOLDOWN := 4.0
+## A rival draws the shears once another body is this close to its head.
+const RIVAL_SHEARS_REACH := 9.0
 
 ## The simulation runs at a fixed rate so it behaves the same on any machine.
 const SIM_HZ := 120.0
@@ -293,6 +308,8 @@ const PHASE_COLOR := Color(1.0, 0.9, 0.3)
 const PHASE_PALE_COLOR := Color(1.0, 0.99, 0.82)
 const FROST_COLOR := Color(0.4, 0.74, 1.0)
 const FROST_PALE_COLOR := Color(0.85, 0.95, 1.0)
+const SHEARS_COLOR := Color(0.45, 0.95, 1.0)
+const SHEARS_PALE_COLOR := Color(0.9, 1.0, 1.0)
 
 ## One palette per player: head, body, tail. The first is always yours.
 ## Each one runs through two hues from head to tail, so a body reads as a
@@ -334,3 +351,15 @@ const SHAKE_DEATH := 0.8             # camera trauma when you die
 const SHAKE_NEAR_DEATH := 0.35       # when somebody dies close to you
 const SHAKE_CRATE := 0.25
 const SHAKE_NEAR := 14.0             # how close "close" is, in units
+
+
+## How long an effect runs, for the fuse drawn round the item slot.
+static func effect_duration(kind: int) -> float:
+	match kind:
+		SnakeWorld.Item.SPEED:
+			return BOOST_DURATION
+		SnakeWorld.Item.PHASE:
+			return PHASE_DURATION
+		SnakeWorld.Item.SHEARS:
+			return SHEARS_DURATION
+	return SLOW_DURATION

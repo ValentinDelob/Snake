@@ -358,6 +358,9 @@ func set_item(carried: int, effect: int, time_left: float, total: float) -> void
 	if effect == 2:
 		_boost_label.text = "SLOWED  %.1fs" % time_left
 		_boost_label.add_theme_color_override("font_color", GameConfig.FROST_COLOR)
+	elif effect == SnakeWorld.Item.SHEARS:
+		_boost_label.text = "SHEARS  %.1fs" % time_left
+		_boost_label.add_theme_color_override("font_color", GameConfig.SHEARS_COLOR.darkened(0.45))
 	elif effect == 5:
 		_boost_label.text = "GHOST  %.1fs" % time_left
 		_boost_label.add_theme_color_override("font_color", GameConfig.PHASE_COLOR)

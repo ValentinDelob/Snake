@@ -24,6 +24,8 @@ var _ghost_material: StandardMaterial3D
 var _crate: MeshInstance3D
 var _crate_lamp: OmniLight3D
 var _crate_material: StandardMaterial3D
+var _shears: Node3D
+var _shears_lamp: OmniLight3D
 var _field: MultiMeshInstance3D
 var _field_mesh: MultiMesh
 var _flash_ring: MeshInstance3D
@@ -96,12 +98,17 @@ func refresh(game_match: SnakeMatch, local_id: int, elapsed: float, flash: float
 			eye.visible = snake.alive
 		_notice_changes(id, snake, visual["palette"])
 		var head := Vector3(snake.head_position.x, BODY_HEIGHT, snake.head_position.y)
-		_fx.trail(id, head, visual["palette"][0], snake.alive and snake.boost_intensity() > 0.3)
+		var blades := snake.cutting()
+		_fx.trail(
+			id, head, GameConfig.SHEARS_COLOR if blades else visual["palette"][0],
+			snake.alive and (blades or snake.boost_intensity() > 0.3)
+		)
 		if not snake.alive:
 			continue
 		mesh.rebuild(snake, BODY_HEIGHT)
 		mesh.set_effects(
-			snake.boost_intensity(), snake.slow_intensity(), snake.phase_intensity()
+			snake.boost_intensity(), snake.slow_intensity(), snake.phase_intensity(),
+			snake.cut_intensity()
 		)
 		mesh.set_flash(flash if id == local_id else 0.0)
 		_place_eyes(visual["eyes"], snake)
@@ -281,6 +288,21 @@ func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 
 	elif _ghost_sparkles.emitting:
 		_ghost_sparkles.emitting = false
+
+	var has_shears := game_match.has_ground(SnakeWorld.Ground.SHEARS)
+	_shears.visible = has_shears
+	_shears_lamp.visible = has_shears
+	if has_shears:
+		var spot := game_match.ground_position(SnakeWorld.Ground.SHEARS)
+		# Upright and spinning, like every item; the blades scissor open and
+		# shut as it turns, which is what says "cutting" from any camera.
+		_shears.position = Vector3(spot.x, 0.95 + 0.1 * sin(elapsed * 2.3), spot.y)
+		_shears.rotation = Vector3(0.0, elapsed * 1.3, 0.0)
+		var snip := 0.18 + 0.16 * absf(sin(elapsed * 3.5))
+		_shears.get_child(0).rotation.z = snip
+		_shears.get_child(1).rotation.z = -snip
+		_shears_lamp.position = _shears.position + Vector3(0.0, 0.4, 0.0)
+		_shears_lamp.light_energy = 1.3 + 0.5 * sin(elapsed * 4.0)
 
 	var has_crate := game_match.has_ground(SnakeWorld.Ground.MYSTERY)
 	_crate.visible = has_crate
@@ -694,6 +716,49 @@ func _build_props() -> void:
 	_ghost_lamp.shadow_enabled = false
 	_ghost_lamp.visible = false
 	add_child(_ghost_lamp)
+
+	# The crystal shears: two blades of cut glass crossed at a pivot, each
+	# with a finger ring. A few extruded triangles and two small tori.
+	var shears_material := StandardMaterial3D.new()
+	shears_material.albedo_color = GameConfig.SHEARS_PALE_COLOR
+	shears_material.emission_enabled = true
+	shears_material.emission = GameConfig.SHEARS_COLOR
+	shears_material.emission_energy_multiplier = 1.6
+	shears_material.roughness = 0.1
+	var blade_mesh := _extrude([PackedVector2Array([
+		Vector2(0.0, 0.62), Vector2(0.07, 0.05), Vector2(0.03, -0.12),
+		Vector2(-0.03, -0.12), Vector2(-0.07, 0.05),
+	])], 0.035)
+	var handle := TorusMesh.new()
+	handle.inner_radius = 0.08
+	handle.outer_radius = 0.13
+	handle.rings = 10
+	handle.ring_segments = 6
+	_shears = Node3D.new()
+	_shears.name = "Shears"
+	_shears.visible = false
+	# Bigger than the bolt: it is rare, and it has to be spotted from afar.
+	_shears.scale = Vector3.ONE * 1.6
+	for side: float in [-1.0, 1.0]:
+		var blade := MeshInstance3D.new()
+		blade.mesh = blade_mesh
+		blade.material_override = shears_material
+		var ring_part := MeshInstance3D.new()
+		ring_part.mesh = handle
+		ring_part.material_override = shears_material
+		ring_part.rotation.x = PI * 0.5
+		ring_part.position = Vector3(side * 0.04, -0.24, 0.0)
+		blade.add_child(ring_part)
+		_shears.add_child(blade)
+	add_child(_shears)
+
+	_shears_lamp = OmniLight3D.new()
+	_shears_lamp.name = "ShearsLamp"
+	_shears_lamp.light_color = GameConfig.SHEARS_COLOR
+	_shears_lamp.omni_range = 6.0
+	_shears_lamp.shadow_enabled = false
+	_shears_lamp.visible = false
+	add_child(_shears_lamp)
 
 	var ring := TorusMesh.new()
 	ring.inner_radius = 0.34

@@ -46,6 +46,7 @@ var _sent_flash := -1.0
 var _sent_boost := -1.0
 var _sent_slow := -1.0
 var _sent_phase := -1.0
+var _sent_blade := -1.0
 
 
 func _ready() -> void:
@@ -104,7 +105,11 @@ func set_palette(head: Color, body: Color, tail: Color) -> void:
 
 
 ## How strongly the lightning and the frost show, each 0 to 1.
-func set_effects(boost: float, slow: float, phase: float = 0.0) -> void:
+func set_effects(boost: float, slow: float, phase: float = 0.0, blade: float = 0.0) -> void:
+	var blade_value := clampf(blade, 0.0, 1.0)
+	if not is_equal_approx(blade_value, _sent_blade):
+		_sent_blade = blade_value
+		_material.set_shader_parameter("blade", blade_value)
 	var boost_value := clampf(boost, 0.0, 1.0)
 	var slow_value := clampf(slow, 0.0, 1.0)
 	var phase_value := clampf(phase, 0.0, 1.0)

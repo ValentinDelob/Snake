@@ -97,6 +97,7 @@ func _ready() -> void:
 	game_match.snake_died.connect(_on_snake_died)
 	game_match.food_eaten.connect(_on_food_eaten)
 	game_match.matter_spat.connect(_on_matter_spat)
+	game_match.snake_cut.connect(_on_snake_cut)
 	game_match.item_collected.connect(_on_item_collected)
 	game_match.finished.connect(_on_match_finished)
 	_board.build(game_match.width, game_match.height)
@@ -316,10 +317,7 @@ func _refresh_hud() -> void:
 	if snake == null:
 		_hud.set_item(0, 0, 0.0, 1.0)
 	else:
-		var total: float = (
-			GameConfig.BOOST_DURATION if snake.effect == SnakeWorld.Item.SPEED
-			else GameConfig.SLOW_DURATION
-		)
+		var total: float = GameConfig.effect_duration(snake.effect)
 		_hud.set_item(snake.carried, snake.effect, snake.effect_time_left, total)
 	_hud.set_players(_scoreboard(), Session.local_id(), spectating)
 
@@ -417,6 +415,22 @@ func _on_local_death(snake: SnakeWorld) -> void:
 	_camera.shake(GameConfig.SHAKE_DEATH)
 
 
+## Somebody was sliced. It is the loudest thing that can happen to a
+## snake short of dying, so it looks and feels like one.
+func _on_snake_cut(cutter_id: int, victim_id: int, matter: float, at: Vector2) -> void:
+	Journal.info("game", "%s cut %s: %.1f matter spilled" % [
+		_player_name(cutter_id), _player_name(victim_id), matter,
+	])
+	var fx := _board.fx()
+	fx.big_burst(at, _board.snake_color(victim_id))
+	fx.shockwave(at, GameConfig.SHEARS_COLOR, 5.0)
+	if victim_id == Session.local_id():
+		_camera.shake(GameConfig.SHAKE_DEATH * 0.7)
+		_hud.announce_loss(matter)
+	elif cutter_id == Session.local_id():
+		_camera.shake(GameConfig.SHAKE_CRATE)
+
+
 func _on_matter_spat(id: int, amount: int) -> void:
 	var snake: SnakeWorld = game_match.snakes[id]
 	_board.play_pickup_flash(snake.head_position, _elapsed, GameConfig.FOOD_COLOR)
@@ -439,6 +453,9 @@ func _on_item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 	if kind == SnakeWorld.Ground.PHASE:
 		color = GameConfig.PHASE_COLOR
 		told = "picked up the ghost ring, stored in the slot"
+	elif kind == SnakeWorld.Ground.SHEARS:
+		color = GameConfig.SHEARS_COLOR
+		told = "picked up the crystal shears, stored in the slot"
 	if crate:
 		match roll:
 			SnakeWorld.Item.SLOW:
@@ -1020,6 +1037,11 @@ func _demo_key(keycode: int) -> void:
 	if keycode == KEY_B:
 		game_match.drop(SnakeWorld.Ground.BOLT)
 		Journal.info("game", "Demo: a bolt dropped on request")
+	elif keycode == KEY_K:
+		var mine = local_snake()
+		if mine != null and mine.alive:
+			game_match.drop_at(SnakeWorld.Ground.SHEARS, mine.head_position + mine.direction() * 4.0)
+			Journal.info("game", "Demo: crystal shears dropped ahead of you")
 	elif keycode == KEY_N:
 		_demo_crate_bonus = not _demo_crate_bonus
 		game_match.drop(
@@ -1066,6 +1088,8 @@ func _use_item() -> void:
 		return
 	if fired == SnakeWorld.Item.PHASE:
 		Journal.info("game", "Ghost ring fired: %.0fs through bodies" % GameConfig.PHASE_DURATION)
+	elif fired == SnakeWorld.Item.SHEARS:
+		Journal.info("game", "Crystal shears drawn: %.0fs of cutting" % GameConfig.SHEARS_DURATION)
 	else:
 		Journal.info("game", "Speed boost fired for %.0fs" % GameConfig.BOOST_DURATION)
 

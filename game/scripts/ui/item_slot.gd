@@ -41,11 +41,14 @@ func set_state(carried_item: int, active_effect: int, ratio: float) -> void:
 
 
 const GHOST := 5
+const SHEARS := 6
 
 
 func _effect_color() -> Color:
 	if effect == 2:
 		return GameConfig.FROST_COLOR
+	if effect == SHEARS or carried == SHEARS:
+		return GameConfig.SHEARS_COLOR
 	if effect == GHOST or carried == GHOST:
 		return GameConfig.PHASE_COLOR
 	return GameConfig.BOOST_COLOR
@@ -86,6 +89,18 @@ func _draw() -> void:
 		if carried != 0 or effect != 0:
 			item_color = GameConfig.PHASE_COLOR.lerp(GameConfig.PHASE_PALE_COLOR, glow)
 		draw_arc(centre, radius * 0.46, 0.0, TAU, 32, item_color, 3.0, true)
+		return
+
+	# The shears: two crossed blades and their two finger rings.
+	if showing == SHEARS:
+		if carried != 0 or effect != 0:
+			item_color = GameConfig.SHEARS_COLOR.lerp(GameConfig.SHEARS_PALE_COLOR, glow)
+		var reach := radius * 0.5
+		for side: float in [-1.0, 1.0]:
+			var tip := centre + Vector2(side * reach * 0.55, -reach)
+			var grip := centre + Vector2(-side * reach * 0.45, reach * 0.35)
+			draw_line(tip, grip, item_color, 3.5, true)
+			draw_arc(grip + Vector2(-side * 2.0, 5.0), reach * 0.3, 0.0, TAU, 20, item_color, 2.5, true)
 		return
 
 	if carried != 0:
