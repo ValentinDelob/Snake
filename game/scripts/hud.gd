@@ -784,6 +784,14 @@ func show_game_over(cause: String, length: float, best: float, record: bool) -> 
 
 func hide_overlay() -> void:
 	_overlay.visible = false
+	# A menu button that keeps the focus goes on answering the space bar
+	# while the round is being played, which starts a fresh one under the
+	# player's feet. Nothing on the overlay owns the keyboard once it is
+	# out of the way.
+	_menu_items.clear()
+	var focused := get_viewport().gui_get_focus_owner()
+	if focused != null:
+		focused.release_focus()
 
 
 # --------------------------------------------------------------------------- #
