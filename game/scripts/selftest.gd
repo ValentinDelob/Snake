@@ -18,9 +18,9 @@ enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DO
 const PAUSE_FRAMES := 30
 ## Matter fed to the snake before the ghost ring phase, so its body is well
 ## over twice the circle it can turn in.
-const GHOST_TEST_MATTER := 45
+const GHOST_TEST_MATTER := 45.0
 ## And before bringing matter up, so a tenth of it is a round number.
-const SPIT_TEST_MATTER := 20
+const SPIT_TEST_MATTER := 20.0
 const MIN_ACCEPTABLE_FPS := 25.0
 const TURN_HOLD := 0.7
 const SPACING_TOLERANCE := 0.25
@@ -63,19 +63,19 @@ var min_multiplier := 1.0
 var multiplier_after_slow := -1.0
 
 # score cards
-var score_card_gain := 0
-var score_card_loss := 0
+var score_card_gain := 0.0
+var score_card_loss := 0.0
 var length_after_gain := -1.0
 var length_after_loss := -1.0
 var score_floor_held := false
 var length_after_floor := -1.0
 var _gain_crate_requested := false
 var _loss_crate_requested := false
-var _score_before := -1
+var _score_before := -1.0
 var _length_before := -1.0
 var _length_checks := 0
 var _length_errors := 0
-var _score_last := -1
+var _score_last := -1.0
 var _length_last := -1.0
 var _floor_stage := 0
 
@@ -96,22 +96,30 @@ var ghost_curled := false
 
 ## bringing matter back up, and what a death leaves behind
 var spit_refused := false
-var spit_taken := 0
-var spit_dropped := 0
-var matter_left_behind := 0
+var spit_taken := 0.0
+var spit_dropped := 0.0
+var matter_left_behind := 0.0
+var corpse_share := -1.0
 var _spit_requested := false
 var _spit_floor_checked := false
-var _spit_floor_score := 0
-var _spit_before_score := 0
-var _spit_before_field := 0
-var _spit_expected := 0
-var _field_before_death := 0
-var _score_before_death := 0
+var _spit_floor_score := 0.0
+var _spit_before_score := 0.0
+var _spit_before_field := 0.0
+var _spit_expected := 0.0
+var _field_before_death := 0.0
+var _score_before_death := 0.0
 
 ## dying costs a snake its length, not its round
 var respawned := false
 var round_ended := false
 var _was_alive := true
+
+## the field of motes: how many, how big, and how the sizes are shared out
+var motes_seen := 0
+var mote_smallest := 99.0
+var mote_largest := 0.0
+var motes_small := 0
+var motes_big := 0
 
 ## the arena the round was played on
 var arena_seen := Vector2.ZERO
@@ -338,6 +346,14 @@ func _on_menu(game) -> void:
 		release(KEY_ENTER)
 
 
+## What everything on the floor is worth between it all.
+func _field_worth(game) -> float:
+	var total := 0.0
+	for value: float in game.game_match.food_value:
+		total += value
+	return total
+
+
 ## True while the local snake is on the field.
 func snake_alive(game) -> bool:
 	var snake = game.local_snake()
@@ -355,13 +371,17 @@ func _on_play(game) -> void:
 		# Kept one frame behind, so that when a death lands the state from
 		# just before it is still readable.
 		var living = game.local_snake()
-		_field_before_death = game.game_match.food.size()
-		_score_before_death = living.score if living != null else 0
+		_field_before_death = _field_worth(game)
+		_score_before_death = living.score if living != null else 0.0
 	if _was_alive and not alive:
-		var left: int = game.game_match.food.size() - _field_before_death
-		if _score_before_death > 0 and left > matter_left_behind:
-			matter_left_behind = left
-			Journal.info("selftest", "a snake worth %d matter left %d on the floor" % [
+		var left: float = _field_worth(game) - _field_before_death
+		if _score_before_death > 1.0:
+			# Measured as a share of what the snake was worth: matter is
+			# meant to be conserved, whatever size the corpse was.
+			var kept := left / _score_before_death
+			matter_left_behind = maxf(matter_left_behind, left)
+			corpse_share = kept if corpse_share < 0.0 else minf(corpse_share, kept)
+			Journal.info("selftest", "a snake worth %.1f matter left %.1f on the floor" % [
 				_score_before_death, left,
 			])
 		# The snake was lost. The round carries on without it, but whatever
@@ -378,6 +398,7 @@ func _on_play(game) -> void:
 	_was_alive = alive
 	if now < 1.0:
 		_survey_rocks(game)
+		_survey_field(game)
 	_watch_world(game, now)
 
 	match phase:
@@ -405,6 +426,22 @@ func _on_play(game) -> void:
 			_run_finish(game, now)
 		Phase.WAIT:
 			pass        # the bot plays on until the clock runs out
+
+
+## Look over the motes on the floor: what they are worth, and whether the
+## small ones really are the common ones.
+func _survey_field(game) -> void:
+	var values: PackedFloat32Array = game.game_match.food_value
+	if values.size() < 10:
+		return
+	motes_seen = maxi(motes_seen, values.size())
+	for value: float in values:
+		mote_smallest = minf(mote_smallest, value)
+		mote_largest = maxf(mote_largest, value)
+		if value < 1.0:
+			motes_small += 1
+		elif value > 2.0:
+			motes_big += 1
 
 
 ## Look over the rocks this round was given: how many, how varied, and
@@ -485,12 +522,12 @@ func _on_round_restart(game) -> void:
 		_malus_crate_requested = false
 		_slow_started_at = -1.0
 		multiplier_after_slow = -1.0
-	if phase == Phase.SCORE_UP and score_card_gain == 0:
+	if phase == Phase.SCORE_UP and score_card_gain <= 0.0:
 		_gain_crate_requested = false
 	if phase == Phase.SCORE_DOWN and not score_floor_held:
 		_loss_crate_requested = false
 		_floor_stage = 0
-		score_card_loss = 0
+		score_card_loss = 0.0
 	if phase == Phase.GHOST and not ghost_fired:
 		_ghost_requested = false
 		ghost_collected = false
@@ -729,14 +766,14 @@ func _run_score_up(game, now: float) -> void:
 
 	# A fruit swallowed on the same second would flatter the card, so only
 	# the jump inside a single frame counts as its doing.
-	var jump: int = snake.score - _score_last
+	var jump: float = snake.score - _score_last
 	var stretch: float = snake.target_body_length - _length_last
 	_score_last = snake.score
 	_length_last = snake.target_body_length
-	if jump >= GameConfig.SCORE_CARD_POINTS:
+	if jump >= float(GameConfig.SCORE_CARD_POINTS) - 0.01:
 		score_card_gain = jump
 		length_after_gain = stretch
-		Journal.info("selftest", "winning card paid %d points, body up %.2f units" % [
+		Journal.info("selftest", "winning card paid %.1f points, body up %.2f units" % [
 			score_card_gain, length_after_gain,
 		])
 		_enter_phase(Phase.SCORE_DOWN, now)
@@ -754,7 +791,7 @@ func _run_score_down(game, now: float) -> void:
 
 	# Second half of the phase: keep feeding it losing cards until the score
 	# cannot go any lower, then check where it stopped.
-	if _floor_stage == 1 and snake.score == 0:
+	if _floor_stage == 1 and snake.score <= 0.0:
 		score_floor_held = true
 		length_after_floor = snake.target_body_length
 		Journal.info("selftest", "score bottomed out at 0, body back to %.2f units" % [
@@ -776,19 +813,19 @@ func _run_score_down(game, now: float) -> void:
 		_phase_started = now
 		return
 
-	var drop: int = _score_last - snake.score
+	var drop: float = _score_last - snake.score
 	var shrink: float = _length_last - snake.target_body_length
 	_score_last = snake.score
 	_length_last = snake.target_body_length
-	if drop < GameConfig.SCORE_CARD_POINTS and snake.score > 0:
+	if drop < float(GameConfig.SCORE_CARD_POINTS) - 0.01 and snake.score > 0.0:
 		if now - _phase_started > 8.0:
 			_loss_crate_requested = false   # it wandered off: lay another
 		return
 
-	if _floor_stage == 0 and drop >= GameConfig.SCORE_CARD_POINTS:
+	if _floor_stage == 0 and drop >= float(GameConfig.SCORE_CARD_POINTS) - 0.01:
 		score_card_loss = drop
 		length_after_loss = shrink
-		Journal.info("selftest", "losing card cost %d points, body down %.2f units" % [
+		Journal.info("selftest", "losing card cost %.1f points, body down %.2f units" % [
 			score_card_loss, length_after_loss,
 		])
 	_floor_stage = 1
@@ -925,19 +962,19 @@ func _run_spit(game, now: float) -> void:
 			snake.add_score(SPIT_TEST_MATTER - snake.score)
 			snake.body_length = snake.target_body_length
 		_spit_before_score = snake.score
-		_spit_before_field = game.game_match.food.size()
+		_spit_before_field = _field_worth(game)
 		_spit_expected = snake.spit_amount()
-		Journal.info("selftest", "bringing up a tenth of %d matter" % _spit_before_score)
+		Journal.info("selftest", "bringing up a tenth of %.1f matter" % _spit_before_score)
 		press(KEY_E)
 		release(KEY_E)
 		_spit_requested = true
 		_phase_started = now
 		return
 
-	if snake.score < _spit_before_score:
+	if snake.score < _spit_before_score - 0.01:
 		spit_taken = _spit_before_score - snake.score
-		spit_dropped = game.game_match.food.size() - _spit_before_field
-		Journal.info("selftest", "brought up %d of %d expected, %d landed on the floor" % [
+		spit_dropped = _field_worth(game) - _spit_before_field
+		Journal.info("selftest", "brought up %.1f of %.1f expected, %.1f landed" % [
 			spit_taken, _spit_expected, spit_dropped,
 		])
 		_enter_phase(Phase.PAUSE, now)
@@ -1065,14 +1102,16 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) spit(refused=%s, %d up, %d down, corpse=%d) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) motes(%d, %.1f-%.1f, %d small vs %d big) spit(refused=%s, %.1f up, %.1f down, corpse=%.1f at %.0f%%) cards(+%.1f/%+.1fu, -%.1f/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
 		str(quality_faces), fps_limits_seen.size(), vsync_states_seen.size(),
 		debug_fps_shown, debug_hidden,
 		ghost_collected, ghost_fired, ghost_passed_through, respawned, round_ended,
+		motes_seen, mote_smallest, mote_largest, motes_small, motes_big,
 		spit_refused, spit_taken, spit_dropped, matter_left_behind,
+		maxf(corpse_share, 0.0) * 100.0,
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
@@ -1219,29 +1258,55 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("driving into a rock did not kill the snake")
 	if not respawned:
 		failures.append("a snake that died never came back")
+	if motes_seen < 10:
+		failures.append("the field held only %d motes" % motes_seen)
+	else:
+		if mote_smallest < GameConfig.FOOD_VALUE.x - 0.01:
+			failures.append("a mote was worth %.2f, under the floor" % mote_smallest)
+		if mote_largest > GameConfig.FOOD_VALUE.y + 0.01:
+			failures.append("a mote was worth %.2f, over the ceiling" % mote_largest)
+		if mote_largest < 1.5:
+			failures.append("no mote worth more than %.2f ever appeared" % mote_largest)
+		if motes_small < motes_big * 2:
+			failures.append("small motes were not the common ones: %d small, %d big" % [
+				motes_small, motes_big,
+			])
 	if not spit_refused:
 		failures.append("an almost empty snake was still able to bring matter up")
-	if spit_taken != _spit_expected or spit_taken <= 0:
-		failures.append("brought up %d matter, expected %d" % [spit_taken, _spit_expected])
-	elif spit_dropped < spit_taken:
-		failures.append("%d matter came up but only %d landed on the floor" % [
+	if absf(spit_taken - _spit_expected) > 0.05 or spit_taken <= 0.0:
+		failures.append("brought up %.1f matter, expected %.1f" % [spit_taken, _spit_expected])
+	elif spit_dropped < spit_taken - 0.05:
+		failures.append("%.1f matter came up but only %.1f landed on the floor" % [
 			spit_taken, spit_dropped,
 		])
-	if matter_left_behind <= 0:
+	if matter_left_behind <= 0.0:
 		failures.append("a snake that died left nothing behind")
+	elif corpse_share < 0.9:
+		failures.append("a corpse left only %.0f%% of its matter behind" % [corpse_share * 100.0])
 	if not round_ended:
 		failures.append("the round never ended on the clock")
 
-	var card: int = GameConfig.SCORE_CARD_POINTS
+	var card: float = float(GameConfig.SCORE_CARD_POINTS)
 	var per_point: float = GameConfig.GROWTH_PER_FOOD
-	if score_card_gain != card:
-		failures.append("the winning card paid %d points instead of %d" % [score_card_gain, card])
-	elif absf(length_after_gain - card * per_point) > 0.05:
-		failures.append("the body grew %.2f units for %d points" % [length_after_gain, card])
-	if score_card_loss != card:
-		failures.append("the losing card cost %d points instead of %d" % [score_card_loss, card])
-	elif absf(length_after_loss - card * per_point) > 0.05:
-		failures.append("the body shrank %.2f units for %d points" % [length_after_loss, card])
+	# A mote swallowed in the same frame would flatter the card either way,
+	# so the reading is allowed a mote's worth of slack.
+	var slack: float = GameConfig.FOOD_VALUE.y + 0.05
+	if absf(score_card_gain - card) > slack or score_card_gain <= 0.0:
+		failures.append("the winning card paid %.1f points instead of %.1f" % [
+			score_card_gain, card,
+		])
+	elif absf(length_after_gain - score_card_gain * per_point) > 0.05:
+		failures.append("the body grew %.2f units for %.1f points" % [
+			length_after_gain, score_card_gain,
+		])
+	if absf(score_card_loss - card) > slack or score_card_loss <= 0.0:
+		failures.append("the losing card cost %.1f points instead of %.1f" % [
+			score_card_loss, card,
+		])
+	elif absf(length_after_loss - score_card_loss * per_point) > 0.05:
+		failures.append("the body shrank %.2f units for %.1f points" % [
+			length_after_loss, score_card_loss,
+		])
 	if not score_floor_held:
 		failures.append("the score never reached its floor of zero")
 	elif absf(length_after_floor - GameConfig.START_BODY_LENGTH) > 0.05:

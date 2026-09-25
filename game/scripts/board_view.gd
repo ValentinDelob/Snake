@@ -174,7 +174,7 @@ func _refresh_lighting(local, game_match: SnakeMatch) -> void:
 
 
 func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
-	_place_field(game_match.food, elapsed)
+	_place_field(game_match.food, game_match.food_value, elapsed)
 
 	var has_bolt := game_match.has_ground(SnakeWorld.Ground.BOLT)
 	_bolt.visible = has_bolt
@@ -231,17 +231,24 @@ func _refresh_items(game_match: SnakeMatch, elapsed: float) -> void:
 		_crate_lamp.light_energy = 0.8 + 0.3 * sin(elapsed * 2.4)
 
 
-## Every pellet on the floor, bobbing and turning together.
-func _place_field(field: PackedVector2Array, elapsed: float) -> void:
+## Every mote on the floor: bigger and brighter the more it is worth, all
+## breathing together.
+func _place_field(
+	field: PackedVector2Array, values: PackedFloat32Array, elapsed: float
+) -> void:
 	if _field_mesh.instance_count != field.size():
 		_field_mesh.instance_count = field.size()
-	var lift := 0.5 + 0.08 * sin(elapsed * 4.0)
-	var basis := Basis(Vector3.UP, elapsed * 1.6)
+	var breath := 0.9 + 0.1 * sin(elapsed * 3.0)
 	for index in range(field.size()):
-		var pellet: Vector2 = field[index]
-		_field_mesh.set_instance_transform(
-			index, Transform3D(basis, Vector3(pellet.x, lift, pellet.y))
-		)
+		var mote: Vector2 = field[index]
+		var value: float = values[index] if index < values.size() else GameConfig.FOOD_VALUE.x
+		var radius: float = GameConfig.food_radius(value) * breath
+		var lift := 0.3 + radius + 0.06 * sin(elapsed * 4.0 + float(index))
+		_field_mesh.set_instance_transform(index, Transform3D(
+			Basis.IDENTITY.scaled(Vector3.ONE * radius),
+			Vector3(mote.x, lift, mote.y)
+		))
+		_field_mesh.set_instance_color(index, GameConfig.food_glow(value))
 
 
 ## Small, quick ring where something was collected.
@@ -382,19 +389,26 @@ func _build_props() -> void:
 	_head_lamp.shadow_enabled = false
 	add_child(_head_lamp)
 
-	var food_mesh := BoxMesh.new()
-	food_mesh.size = Vector3.ONE * (GameConfig.FOOD_RADIUS * 1.5)
+	# Motes, not crates: a small unlit ball whose colour is brighter than
+	# white for the valuable ones, which is what makes the glow pick them
+	# out across a dark field. The colour rides on the instance, so one
+	# batch draws the whole field.
+	var food_mesh := SphereMesh.new()
+	food_mesh.radius = 1.0
+	food_mesh.height = 2.0
+	food_mesh.radial_segments = 7
+	food_mesh.rings = 4
 	var food_material := StandardMaterial3D.new()
-	food_material.albedo_color = GameConfig.FOOD_COLOR.darkened(0.15)
-	food_material.roughness = 0.35
-	food_material.emission_enabled = true
-	food_material.emission = GameConfig.FOOD_COLOR
-	food_material.emission_energy_multiplier = 0.22
+	food_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	food_material.vertex_color_use_as_albedo = true
+	food_material.albedo_color = Color.WHITE
+	food_material.disable_receive_shadows = true
 
 	# Dozens of pellets lie about at once, so they are drawn as one batch
 	# rather than as one node each.
 	_field_mesh = MultiMesh.new()
 	_field_mesh.transform_format = MultiMesh.TRANSFORM_3D
+	_field_mesh.use_colors = true
 	_field_mesh.mesh = food_mesh
 	_field_mesh.instance_count = 0
 

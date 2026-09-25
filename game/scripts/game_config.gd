@@ -39,41 +39,72 @@ const GIRTH_HALF_MATTER := 45.0     # matter at which half of that is reached
 ## something worth bringing up. What comes out lands on the floor behind
 ## the snake, for anybody at all.
 const SPIT_SHARE := 0.1
-const SPIT_MINIMUM := 10
+const SPIT_MINIMUM := 10.0
 
 const SLUGGISH_FLOOR := 0.55        # slowest it goes, as a share of cruising
 const TURN_FLOOR := 0.6             # and how tightly it can still turn
 
 
 ## 0 when empty, approaching 1 as the matter piles up.
-static func fullness(matter: int) -> float:
-	var eaten := float(maxi(0, matter))
+static func fullness(matter: float) -> float:
+	var eaten := maxf(0.0, matter)
 	return eaten / (eaten + GIRTH_HALF_MATTER)
 
 
-static func girth_for(matter: int) -> float:
+static func girth_for(matter: float) -> float:
 	return SNAKE_RADIUS * (1.0 + (GIRTH_MAX - 1.0) * fullness(matter))
 
 
-static func speed_scale_for(matter: int) -> float:
+static func speed_scale_for(matter: float) -> float:
 	return 1.0 - (1.0 - SLUGGISH_FLOOR) * fullness(matter)
 
 
-static func turn_scale_for(matter: int) -> float:
+static func turn_scale_for(matter: float) -> float:
 	return 1.0 - (1.0 - TURN_FLOOR) * fullness(matter)
 
 
 const START_BODY_LENGTH := 2.6    # world units of body behind the head
-const GROWTH_PER_FOOD := 0.45    # a field full of matter means cheaper bites
+## Matter is measured in the length it becomes, so a mote worth 0.2 adds
+## exactly 0.2 units of snake.
+const GROWTH_PER_FOOD := 1.0
 ## The body does not jump to its new length: it grows into it.
 const GROWTH_SPEED := 2.2         # world units per second
 ## Body close to the head is ignored by self collision: it always touches.
 const SELF_COLLISION_SKIP := 1.5
 
-const FOOD_RADIUS := 0.4
+## Motes are worth between a fifth of a unit and three, and the small ones
+## are far commoner: the value is rolled on a curve that hugs the bottom of
+## the range, so a big mote is a find rather than a fixture.
+const FOOD_VALUE := Vector2(0.2, 3.0)
+const FOOD_VALUE_BIAS := 4.0
+const FOOD_RADIUS := 0.22           # the smallest mote
+const FOOD_RADIUS_MAX := 0.62       # and the biggest
+
+
+## Roll the worth of one mote.
+static func roll_food_value(rng: RandomNumberGenerator) -> float:
+	return lerpf(FOOD_VALUE.x, FOOD_VALUE.y, pow(rng.randf(), FOOD_VALUE_BIAS))
+
+
+## How big a mote of that worth looks and how far it can be reached. The
+## square root keeps the smallest ones visible rather than specks.
+static func food_radius(value: float) -> float:
+	var share := clampf((value - FOOD_VALUE.x) / (FOOD_VALUE.y - FOOD_VALUE.x), 0.0, 1.0)
+	return lerpf(FOOD_RADIUS, FOOD_RADIUS_MAX, sqrt(share))
+
+
+## The colour of a mote, brighter than white for the big ones so the glow
+## picks them out across the field.
+static func food_glow(value: float) -> Color:
+	var share := clampf((value - FOOD_VALUE.x) / (FOOD_VALUE.y - FOOD_VALUE.x), 0.0, 1.0)
+	return Color(
+		lerpf(1.15, 2.6, share),
+		lerpf(0.75, 1.5, share),
+		lerpf(0.45, 0.35, share)
+	)
 ## How much matter lies about: one pellet per this many square units, so a
 ## bigger arena is not a barer one.
-const FOOD_PER_AREA := 70.0
+const FOOD_PER_AREA := 46.0
 const FOOD_MIN := 12
 
 ## Speed boost: a lightning bolt lying on the arena, kept in the item slot

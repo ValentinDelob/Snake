@@ -9,7 +9,7 @@ extends RefCounted
 
 signal snake_died(id: int, cause: SnakeWorld.Outcome)
 signal food_eaten(id: int)
-signal matter_spat(id: int, amount: int)
+signal matter_spat(id: int, amount: float)
 signal item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 signal finished(winner_id: int)
 
@@ -21,6 +21,8 @@ var snakes: Dictionary = {}          # id -> SnakeWorld
 ## the field and another is sown somewhere else, so the field never runs
 ## dry and never fills up.
 var food := PackedVector2Array()
+## What each mote on the floor is worth, in the same order as `food`.
+var food_value := PackedFloat32Array()
 var ground: Array = []               # [{ "kind": Ground, "position": Vector2 }]
 
 ## Rocks: solid, round, of varying size. They are generated once per round
@@ -140,13 +142,13 @@ func _spawn_pose(index: int, count: int) -> Array:
 ## Bring up a tenth of what a snake has swallowed. The matter is not
 ## destroyed: it lands on the floor behind the snake, where anybody -
 ## including the snake that brought it up - can eat it again.
-func spit(id: int) -> int:
+func spit(id: int) -> float:
 	var snake: SnakeWorld = snakes.get(id)
 	if snake == null or not snake.alive:
-		return 0
+		return 0.0
 	var amount := snake.spit_amount()
-	if amount <= 0:
-		return 0
+	if amount <= 0.0:
+		return 0.0
 	snake.add_score(-amount)
 	# It lands well behind the head and off to the side, so the snake does
 	# not simply swallow it again and it is not hidden under the body.
@@ -157,10 +159,10 @@ func spit(id: int) -> int:
 
 ## A snake that dies leaves everything it swallowed on the floor, spread
 ## along the body it no longer has. Matter is never lost, only dropped.
-func decompose(snake: SnakeWorld) -> int:
+func decompose(snake: SnakeWorld) -> float:
 	var amount := snake.score
-	if amount <= 0:
-		return 0
+	if amount <= 0.0:
+		return 0.0
 	var spread: PackedVector2Array = snake.body_points()
 	if spread.is_empty():
 		spread = PackedVector2Array([snake.death_position])
@@ -170,20 +172,31 @@ func decompose(snake: SnakeWorld) -> int:
 
 ## Lay `amount` pellets along a line of points, skipping the first few so
 ## nothing lands under the head that produced them.
-func _scatter_matter(along: PackedVector2Array, amount: int, skip: int) -> void:
-	if along.is_empty() or amount <= 0:
+## Lay motes along a line of points until they are worth `amount` between
+## them, skipping the first few so nothing lands under the head that
+## produced them. What went in comes back out, mote by mote.
+func _scatter_matter(along: PackedVector2Array, amount: float, skip: int) -> void:
+	if along.is_empty() or amount <= 0.0:
 		return
 	# A short snake has fewer points than the skip asks for: start wherever
 	# there is something rather than off the end of the body.
 	var first := mini(skip, along.size() - 1)
 	var usable := maxi(1, along.size() - first)
-	for index in range(amount):
-		var at: Vector2 = along[mini(first + (index * usable) / amount, along.size() - 1)]
+	var left := amount
+	var laid := 0
+	while left > 0.0 and laid < 400:
+		var value: float = minf(GameConfig.roll_food_value(_rng), left)
+		if left - value < GameConfig.FOOD_VALUE.x:
+			value = left        # no crumb too small to be worth eating
+		left -= value
+		var at: Vector2 = along[mini(first + (laid * usable) / 8, along.size() - 1)]
 		var jitter := Vector2(_rng.randf_range(-1.3, 1.3), _rng.randf_range(-1.3, 1.3))
 		food.append(Vector2(
 			clampf(at.x + jitter.x, 0.6, width - 0.6),
 			clampf(at.y + jitter.y, 0.6, height - 0.6)
 		))
+		food_value.append(value)
+		laid += 1
 
 
 ## How many pellets this arena should hold.
@@ -194,14 +207,17 @@ func field_size() -> int:
 ## Fill the field from scratch at the start of a round.
 func _sow_field() -> void:
 	food.resize(0)
+	food_value.resize(0)
 	for _index in range(field_size()):
-		food.append(free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0))
+		sow_one()
 
 
 ## Drop one pellet somewhere sensible. Used when one is eaten, so the
 ## amount of matter on the floor stays where the arena wants it.
 func sow_one() -> void:
-	food.append(free_spot(GameConfig.FOOD_RADIUS + 0.8, 3.0))
+	var value := GameConfig.roll_food_value(_rng)
+	food.append(free_spot(GameConfig.food_radius(value) + 0.8, 3.0))
+	food_value.append(value)
 
 
 ## Scatter rocks of assorted sizes. Everything a snake needs at the start of
@@ -431,13 +447,14 @@ func _check_bite(id: int, snake: SnakeWorld) -> void:
 
 
 func _check_food(id: int, snake: SnakeWorld) -> void:
-	var reach: float = snake.radius + GameConfig.FOOD_RADIUS
-	var reach_squared := reach * reach
 	for index in range(food.size() - 1, -1, -1):
-		if snake.head_position.distance_squared_to(food[index]) >= reach_squared:
+		var value: float = food_value[index]
+		var reach: float = snake.radius + GameConfig.food_radius(value)
+		if snake.head_position.distance_squared_to(food[index]) >= reach * reach:
 			continue
 		food.remove_at(index)
-		snake.add_score(1)
+		food_value.remove_at(index)
+		snake.add_score(value)
 		# The field is kept at its size, but what a snake brought up or left
 		# behind counts towards it: sowing on top of that would flood it.
 		if food.size() < field_size():

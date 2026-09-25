@@ -36,7 +36,9 @@ var effect: Item = Item.NONE    # what is currently running
 var effect_time_left := 0.0
 var speed_multiplier := 1.0
 
-var score := 0
+## Matter swallowed, in the length it bought. The score and the length are
+## the same thing seen twice.
+var score := 0.0
 ## How wide the body is, and how much the girth costs in speed and in
 ## turning. All three follow the matter eaten, so they are kept together.
 var radius := GameConfig.SNAKE_RADIUS
@@ -72,7 +74,7 @@ func reset(spawn_position: Vector2, spawn_heading: float) -> void:
 	effect = Item.NONE
 	effect_time_left = 0.0
 	speed_multiplier = 1.0
-	score = 0
+	score = 0.0
 	_follow_girth()
 	steps = 0
 	distance_travelled = 0.0
@@ -243,9 +245,9 @@ func grow(amount: float) -> void:
 ## Move the score and let the body follow it. Length is nothing but the
 ## score made visible: lose points and the snake shortens again, and a
 ## score driven down to nothing leaves it as small as it started.
-func add_score(points: int) -> int:
+func add_score(points: float) -> float:
 	var before := score
-	score = maxi(0, score + points)
+	score = maxf(0.0, score + points)
 	target_body_length = length_for_score(score)
 	_follow_girth()
 	return score - before
@@ -259,8 +261,8 @@ func _follow_girth() -> void:
 	turn_scale = GameConfig.turn_scale_for(score)
 
 
-static func length_for_score(value: int) -> float:
-	return GameConfig.START_BODY_LENGTH + float(maxi(0, value)) * GameConfig.GROWTH_PER_FOOD
+static func length_for_score(value: float) -> float:
+	return GameConfig.START_BODY_LENGTH + maxf(0.0, value) * GameConfig.GROWTH_PER_FOOD
 
 
 # --------------------------------------------------------------------------- #
@@ -268,10 +270,10 @@ static func length_for_score(value: int) -> float:
 # --------------------------------------------------------------------------- #
 ## How much would come up if the snake were to spit now: a tenth of what
 ## it has swallowed, and nothing at all below the threshold.
-func spit_amount() -> int:
+func spit_amount() -> float:
 	if score < GameConfig.SPIT_MINIMUM:
-		return 0
-	return maxi(1, int(round(float(score) * GameConfig.SPIT_SHARE)))
+		return 0.0
+	return score * GameConfig.SPIT_SHARE
 
 
 ## Fire the carried item. Returns false when there is nothing to fire.
@@ -379,7 +381,7 @@ func _trim_path() -> void:
 ## head positions, so a remote body draws exactly as a local one would.
 func apply_snapshot(
 	position: Vector2, new_heading: float, length: float,
-	multiplier: float, new_effect: Item, is_alive: bool, new_score: int
+	multiplier: float, new_effect: Item, is_alive: bool, new_score: float
 ) -> void:
 	head_position = position
 	heading = new_heading

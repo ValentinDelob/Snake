@@ -654,12 +654,15 @@ func _broadcast_snapshot(delta: float) -> void:
 	var ground: Array = []
 	for item: Dictionary in game_match.ground:
 		ground.append([int(item["kind"]), item["position"]])
-	_apply_snapshot.rpc(snakes, game_match.food, ground)
+	_apply_snapshot.rpc(snakes, game_match.food, game_match.food_value, ground)
 
 
 @rpc("authority", "call_remote", "unreliable")
-func _apply_snapshot(snakes: Dictionary, food: PackedVector2Array, ground: Array) -> void:
+func _apply_snapshot(
+	snakes: Dictionary, food: PackedVector2Array, values: PackedFloat32Array, ground: Array
+) -> void:
 	game_match.food = food
+	game_match.food_value = values
 	game_match.ground = []
 	for entry: Array in ground:
 		game_match.ground.append({"kind": entry[0], "position": entry[1]})
