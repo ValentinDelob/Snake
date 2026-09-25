@@ -131,7 +131,7 @@ func _place_eyes(eyes: Array, snake: SnakeWorld) -> void:
 	var center := Vector3(snake.head_position.x, BODY_HEIGHT, snake.head_position.y)
 	# The eyes must sit on the skin of the tube, not inside it, so they are
 	# pushed out along a direction and not along each axis separately.
-	var bulge := GameConfig.SNAKE_RADIUS * GameConfig.HEAD_BULGE
+	var bulge := snake.radius * GameConfig.HEAD_BULGE
 	for index in range(eyes.size()):
 		var sign_value := -1.0 if index == 0 else 1.0
 		var outwards := (

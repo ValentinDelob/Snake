@@ -37,6 +37,11 @@ var effect_time_left := 0.0
 var speed_multiplier := 1.0
 
 var score := 0
+## How wide the body is, and how much the girth costs in speed and in
+## turning. All three follow the matter eaten, so they are kept together.
+var radius := GameConfig.SNAKE_RADIUS
+var speed_scale := 1.0
+var turn_scale := 1.0
 var steps := 0
 var distance_travelled := 0.0
 var alive := true
@@ -68,6 +73,7 @@ func reset(spawn_position: Vector2, spawn_heading: float) -> void:
 	effect_time_left = 0.0
 	speed_multiplier = 1.0
 	score = 0
+	_follow_girth()
 	steps = 0
 	distance_travelled = 0.0
 	alive = true
@@ -153,7 +159,7 @@ func sample_path_at(distances: PackedFloat32Array, out: PackedVector2Array) -> v
 
 
 func is_inside(point: Vector2) -> bool:
-	var margin := GameConfig.SNAKE_RADIUS
+	var margin := radius
 	return (
 		point.x >= margin and point.x <= width - margin
 		and point.y >= margin and point.y <= height - margin
@@ -166,8 +172,8 @@ func hits_body(point: Vector2, ignore_from_head: float = GameConfig.SELF_COLLISI
 	var points := body_points()
 	# Squared throughout: this runs over every body point on every step, and
 	# a square root per point is a square root wasted.
-	var radius := GameConfig.SNAKE_RADIUS * 1.6
-	var radius_squared := radius * radius
+	var reach := radius * 1.6
+	var radius_squared := reach * reach
 	for index in range(skip, points.size()):
 		if point.distance_squared_to(points[index]) < radius_squared:
 			return true
@@ -197,9 +203,11 @@ func advance(delta: float) -> void:
 			target_body_length, body_length - GameConfig.GROWTH_SPEED * delta
 		)
 		_points_dirty = true
-	heading = wrapf(heading + turn_input * GameConfig.TURN_RATE * delta, -PI, PI)
+	heading = wrapf(
+		heading + turn_input * GameConfig.TURN_RATE * turn_scale * delta, -PI, PI
+	)
 
-	var travel := GameConfig.SNAKE_SPEED * speed_multiplier * delta
+	var travel := GameConfig.SNAKE_SPEED * speed_multiplier * speed_scale * delta
 	head_position += direction() * travel
 	distance_travelled += travel
 	# The samples are measured from the head, so moving invalidates them.
@@ -239,7 +247,16 @@ func add_score(points: int) -> int:
 	var before := score
 	score = maxi(0, score + points)
 	target_body_length = length_for_score(score)
+	_follow_girth()
 	return score - before
+
+
+## Girth, speed and turning are nothing but the matter eaten, read three
+## different ways.
+func _follow_girth() -> void:
+	radius = GameConfig.girth_for(score)
+	speed_scale = GameConfig.speed_scale_for(score)
+	turn_scale = GameConfig.turn_scale_for(score)
 
 
 static func length_for_score(value: int) -> float:
@@ -363,6 +380,7 @@ func apply_snapshot(
 	speed_multiplier = multiplier
 	effect = new_effect
 	score = new_score
+	_follow_girth()
 	if alive and not is_alive:
 		death_position = position
 	alive = is_alive

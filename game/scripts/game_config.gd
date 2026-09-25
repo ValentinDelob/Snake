@@ -30,8 +30,35 @@ const SNAKE_SPEED := 5.2          # world units per second
 const TURN_RATE := 3.1            # radians per second while a turn is held
 const SNAKE_RADIUS := 0.36
 const SEGMENT_SPACING := 0.42     # sampling used by collisions
+## Gluttony: what you swallow shows, and it costs. Girth, sluggishness and
+## the turning circle all follow the matter eaten, and all of them flatten
+## out - a giant is a wide, ponderous beast, never a stationary wall.
+const GIRTH_MAX := 2.4              # widest the body gets, times the base
+const GIRTH_HALF_MATTER := 45.0     # matter at which half of that is reached
+const SLUGGISH_FLOOR := 0.55        # slowest it goes, as a share of cruising
+const TURN_FLOOR := 0.6             # and how tightly it can still turn
+
+
+## 0 when empty, approaching 1 as the matter piles up.
+static func fullness(matter: int) -> float:
+	var eaten := float(maxi(0, matter))
+	return eaten / (eaten + GIRTH_HALF_MATTER)
+
+
+static func girth_for(matter: int) -> float:
+	return SNAKE_RADIUS * (1.0 + (GIRTH_MAX - 1.0) * fullness(matter))
+
+
+static func speed_scale_for(matter: int) -> float:
+	return 1.0 - (1.0 - SLUGGISH_FLOOR) * fullness(matter)
+
+
+static func turn_scale_for(matter: int) -> float:
+	return 1.0 - (1.0 - TURN_FLOOR) * fullness(matter)
+
+
 const START_BODY_LENGTH := 2.6    # world units of body behind the head
-const GROWTH_PER_FOOD := 1.1
+const GROWTH_PER_FOOD := 0.45    # a field full of matter means cheaper bites
 ## The body does not jump to its new length: it grows into it.
 const GROWTH_SPEED := 2.2         # world units per second
 ## Body close to the head is ignored by self collision: it always touches.

@@ -38,6 +38,7 @@ var _centres := PackedVector2Array()
 var _points := PackedVector3Array()
 var _radii := PackedFloat32Array()
 var _shades := PackedFloat32Array()
+var _girth := GameConfig.SNAKE_RADIUS
 var _planned_length := -1.0
 var _built_length := -1.0
 var _built_steps := -1
@@ -127,12 +128,17 @@ func face_count() -> int:
 ## finds it where it left it hands the renderer nothing at all.
 func rebuild(world: SnakeWorld, height: float) -> void:
 	_apply_quality()
-	if world.steps == _built_steps and is_equal_approx(world.body_length, _built_length):
+	if (
+		world.steps == _built_steps
+		and is_equal_approx(world.body_length, _built_length)
+		and is_equal_approx(world.radius, _girth)
+	):
 		return
 	_built_steps = world.steps
 	_built_length = world.body_length
 
 	var mode := GameConfig.quality_mode()
+	_girth = world.radius
 	var length: float = maxf(world.body_length, float(mode["ring"]) * 2.0)
 	_plan_rings(length, mode)
 	world.sample_path_at(_ring_distances, _centres)
@@ -146,7 +152,7 @@ func rebuild(world: SnakeWorld, height: float) -> void:
 
 	var head := Vector3(world.head_position.x, height, world.head_position.y)
 	var forward := Vector3(world.direction().x, 0.0, world.direction().y)
-	var head_radius := GameConfig.SNAKE_RADIUS * GameConfig.HEAD_BULGE
+	var head_radius := _girth * GameConfig.HEAD_BULGE
 
 	# Ring centres: the rounded nose first, then the body down to the tail.
 	for index in range(_nose_rings + 1):
@@ -198,11 +204,13 @@ func _plan_rings(length: float, mode: Dictionary) -> void:
 
 # --------------------------------------------------------------------------- #
 func _radius_at(travelled: float, along: float) -> float:
-	var radius := GameConfig.SNAKE_RADIUS
+	var radius := _girth
 
-	# The head bulge fades out over the first body units.
-	if travelled < GameConfig.HEAD_BULGE_LENGTH:
-		var fade := 1.0 - travelled / GameConfig.HEAD_BULGE_LENGTH
+	# The head bulge fades out over the first body units, and a fatter
+	# snake has a proportionally longer one.
+	var bulge_length: float = GameConfig.HEAD_BULGE_LENGTH * _girth / GameConfig.SNAKE_RADIUS
+	if travelled < bulge_length:
+		var fade := 1.0 - travelled / bulge_length
 		radius *= lerpf(1.0, GameConfig.HEAD_BULGE, fade * fade)
 
 	# Then it thins down towards the tail, ending in a point.

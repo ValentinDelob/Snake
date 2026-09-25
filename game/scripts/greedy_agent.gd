@@ -42,6 +42,11 @@ func _target(world: SnakeWorld) -> Vector2:
 	var best: Vector2 = _nearest_pellet(world)
 	var best_distance: float = world.head_position.distance_to(best) * 1.6
 
+	# The ghost ring is the rarest thing on the field and the only one worth
+	# crossing it for, so it outranks everything else.
+	if world.carried == SnakeWorld.Item.NONE and _match.has_ground(SnakeWorld.Ground.PHASE):
+		return _match.ground_position(SnakeWorld.Ground.PHASE)
+
 	if world.carried == SnakeWorld.Item.NONE and _match.has_ground(SnakeWorld.Ground.BOLT):
 		var bolt: Vector2 = _match.ground_position(SnakeWorld.Ground.BOLT)
 		var distance: float = world.head_position.distance_to(bolt)
@@ -73,8 +78,9 @@ func _nearest_pellet(world: SnakeWorld) -> Vector2:
 
 ## Non-zero when something is in the way, pointing to the freer side.
 func _avoid(world: SnakeWorld) -> float:
-	# Twice the speed needs twice the warning.
-	var reach: float = LOOK_AHEAD * world.speed_multiplier
+	# Twice the speed needs twice the warning - and so does a body too fat
+	# to turn sharply, which needs a wider circle to get out of the way.
+	var reach: float = LOOK_AHEAD * world.speed_multiplier / maxf(world.turn_scale, 0.2)
 	var ahead := _blocked(world, 0.0, reach)
 	var left := _blocked(world, -FEELER_ANGLE, reach * 0.8)
 	var right := _blocked(world, FEELER_ANGLE, reach * 0.8)
@@ -103,7 +109,7 @@ func _blocked(world: SnakeWorld, angle_offset: float, distance: float) -> bool:
 		if world.hits_body(point):
 			return true
 		# A rock stops you as dead as a wall does.
-		if _match != null and _match.blocked_by_obstacle(point, GameConfig.SNAKE_RADIUS):
+		if _match != null and _match.blocked_by_obstacle(point, world.radius):
 			return true
 		# Another snake is every bit as solid as your own tail.
 		if _match != null:
@@ -120,11 +126,12 @@ func _room(world: SnakeWorld, angle_offset: float) -> float:
 		cos(world.heading + angle_offset), sin(world.heading + angle_offset)
 	)
 	var travelled := 0.0
-	while travelled < 12.0:
+	var limit: float = 12.0 / maxf(world.turn_scale, 0.2)
+	while travelled < limit:
 		travelled += 0.6
 		var point: Vector2 = world.head_position + direction * travelled
 		if not world.is_inside(point) or world.hits_body(point):
 			break
-		if _match != null and _match.blocked_by_obstacle(point, GameConfig.SNAKE_RADIUS):
+		if _match != null and _match.blocked_by_obstacle(point, world.radius):
 			break
 	return travelled

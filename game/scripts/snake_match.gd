@@ -343,7 +343,7 @@ func step(delta: float) -> void:
 		if SnakeWorld.is_death(outcome):
 			snake_died.emit(id, outcome)
 			continue
-		if blocked_by_obstacle(snake.head_position, GameConfig.SNAKE_RADIUS):
+		if blocked_by_obstacle(snake.head_position, snake.radius):
 			snake.kill(snake.head_position)
 			snake_died.emit(id, SnakeWorld.Outcome.DEAD_ROCK)
 			continue
@@ -378,7 +378,7 @@ func _check_bite(id: int, snake: SnakeWorld) -> void:
 
 
 func _check_food(id: int, snake: SnakeWorld) -> void:
-	var reach: float = GameConfig.SNAKE_RADIUS + GameConfig.FOOD_RADIUS
+	var reach: float = snake.radius + GameConfig.FOOD_RADIUS
 	var reach_squared := reach * reach
 	for index in range(food.size() - 1, -1, -1):
 		if snake.head_position.distance_squared_to(food[index]) >= reach_squared:
@@ -394,7 +394,7 @@ func _check_ground(id: int, snake: SnakeWorld) -> void:
 	for index in range(ground.size() - 1, -1, -1):
 		var item: Dictionary = ground[index]
 		var radius: float = _ground_radius(item["kind"])
-		if snake.head_position.distance_to(item["position"]) > GameConfig.SNAKE_RADIUS + radius:
+		if snake.head_position.distance_to(item["position"]) > snake.radius + radius:
 			continue
 		if item["kind"] != SnakeWorld.Ground.MYSTERY and snake.carried != SnakeWorld.Item.NONE:
 			continue    # the slot is busy: leave it where it lies

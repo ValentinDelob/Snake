@@ -16,6 +16,9 @@ extends RefCounted
 enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, GHOST, PAUSE, FINISH, WAIT }
 
 const PAUSE_FRAMES := 30
+## Matter fed to the snake before the ghost ring phase, so its body is well
+## over twice the circle it can turn in.
+const GHOST_TEST_MATTER := 45
 const MIN_ACCEPTABLE_FPS := 25.0
 const TURN_HOLD := 0.7
 const SPACING_TOLERANCE := 0.25
@@ -85,6 +88,9 @@ var ghost_fired := false
 var ghost_passed_through := false
 var _ghost_requested := false
 var _ghost_curling := false
+var _ghost_press_sent := false
+var _rule_checked := false
+var ghost_curled := false
 
 ## dying costs a snake its length, not its round
 var respawned := false
@@ -455,13 +461,10 @@ func _on_round_restart(game) -> void:
 		_loss_crate_requested = false
 		_floor_stage = 0
 		score_card_loss = 0
-	if phase == Phase.GHOST and not ghost_passed_through:
-		if _ghost_curling:
-			release(KEY_LEFT)
-			_ghost_curling = false
+	if phase == Phase.GHOST and not ghost_fired:
 		_ghost_requested = false
 		ghost_collected = false
-		ghost_fired = false
+		_ghost_press_sent = false
 	if phase == Phase.FINISH and not rock_death:
 		# The rock went with the old arena: the next round needs a new one.
 		_rock_dropped = false
@@ -546,6 +549,16 @@ func _check_display_settings(game) -> void:
 
 ## Hold LEFT, then RIGHT, and check the heading actually turned each way.
 func _run_turns(game, now: float) -> void:
+	# Steering a snake that is off the field proves nothing, and the reading
+	# taken at the end of the hold would be meaningless.
+	if not snake_alive(game):
+		if _turn_phase > 0 and _turn_phase < 3:
+			release(KEY_LEFT)
+			release(KEY_RIGHT)
+			game.agent = _saved_agent
+			_turn_phase = 0
+			_turn_waiting_since = -1.0
+		return
 	match _turn_phase:
 		0:
 			# Steering by hand means no bot: wait for open space first, so the
@@ -614,6 +627,8 @@ func _run_boost(game, now: float) -> void:
 ## A crate rigged to hold a bonus: it must land in the slot, not fire itself.
 func _run_crate_bonus(game, now: float) -> void:
 	var snake = game.local_snake()
+	if snake == null or not snake.alive:
+		return
 	if not _bonus_crate_requested:
 		Journal.info("selftest", "dropping a crate rigged with a bonus in the path")
 		game.game_match.drop_at(
@@ -667,6 +682,8 @@ func _run_crate_malus(game, now: float) -> void:
 ## and a body that grows to match them.
 func _run_score_up(game, now: float) -> void:
 	var snake = game.local_snake()
+	if snake == null or not snake.alive:
+		return
 	if not _gain_crate_requested:
 		Journal.info("selftest", "dropping a crate rigged with the winning card")
 		_score_before = snake.score
@@ -702,6 +719,8 @@ func _run_score_up(game, now: float) -> void:
 ## the snake go back to the size it started at.
 func _run_score_down(game, now: float) -> void:
 	var snake = game.local_snake()
+	if snake == null or not snake.alive:
+		return
 
 	# Second half of the phase: keep feeding it losing cards until the score
 	# cannot go any lower, then check where it stopped.
@@ -746,14 +765,19 @@ func _run_score_down(game, now: float) -> void:
 	_loss_crate_requested = false
 
 
-## The ghost ring, start to finish: lay one in the path, pick it up, fire
-## it, then curl the snake hard into its own body and watch it come out the
-## other side alive. The score is topped up first so the body is long
-## enough to cross itself inside the one second the ring lasts.
+## The ghost ring, driven the way a player would: pick it up, fire it, see
+## the second start. Whether it really carries a head through a body is
+## settled separately, against the rules themselves, because driving a
+## snake into its own tail inside a one second window is a coin toss and a
+## test should not be one.
 func _run_ghost(game, now: float) -> void:
 	var snake = game.local_snake()
-	if snake == null:
+	if snake == null or not snake.alive:
 		return
+
+	if not _rule_checked:
+		_rule_checked = true
+		_check_phase_rule()
 
 	# The ring will not go into a slot that is already full, so whatever is
 	# in there is spent first.
@@ -764,9 +788,6 @@ func _run_ghost(game, now: float) -> void:
 		return
 
 	if not _ghost_requested:
-		if snake.score < 18:
-			snake.add_score(18 - snake.score)
-			snake.body_length = snake.target_body_length
 		Journal.info("selftest", "dropping the ghost ring in the path")
 		game.game_match.drop_at(SnakeWorld.Ground.PHASE, _ahead_of(snake))
 		_ghost_requested = true
@@ -777,41 +798,72 @@ func _run_ghost(game, now: float) -> void:
 		if snake.carried == SnakeWorld.Item.PHASE:
 			ghost_collected = true
 			Journal.info("selftest", "ghost ring is in the slot")
+			_phase_started = now
 		elif now - _phase_started > 8.0:
 			_ghost_requested = false      # it wandered off: lay another
 		return
 
-	if not ghost_fired:
-		Journal.info("selftest", "firing the ghost ring and curling into the body")
-		_saved_agent = game.agent
-		game.agent = null
+	# An injected key is only read on the next frame, so firing and checking
+	# that it fired have to be two separate steps.
+	if not _ghost_press_sent:
+		Journal.info("selftest", "firing the ghost ring")
 		press(KEY_SPACE)
 		release(KEY_SPACE)
-		press(KEY_LEFT)
-		_ghost_curling = true
-		ghost_fired = snake.effect == SnakeWorld.Item.PHASE
+		_ghost_press_sent = true
 		_phase_started = now
 		return
 
-	# The proof: the head is inside its own body and the snake is still
-	# going. Without the ring that is a death, every time.
-	if snake.phasing() and snake.alive and snake.hits_body(snake.head_position):
-		if not ghost_passed_through:
-			ghost_passed_through = true
-			Journal.info("selftest", "head is inside the body and still alive")
-
-	if not snake.phasing():
-		if _ghost_curling:
-			release(KEY_LEFT)
-			game.agent = _saved_agent
-			_ghost_curling = false
-		if ghost_passed_through or now - _phase_started > 6.0:
-			Journal.info("selftest", "ghost ring spent, walked through: %s" % ghost_passed_through)
+	if not ghost_fired:
+		if snake.effect == SnakeWorld.Item.PHASE:
+			ghost_fired = true
+			Journal.info("selftest", "the ghost second is running")
 			_enter_phase(Phase.PAUSE, now)
-		else:
-			_ghost_requested = false      # try again with a fresh ring
+		elif now - _phase_started > 1.5:
+			_ghost_press_sent = false     # the press was lost: try again
+			_ghost_requested = false
 			ghost_collected = false
-			ghost_fired = false
+
+
+## The rule behind the ring, checked where it lives. A snake is curled into
+## its own body, and then stepped once with the ring running and once
+## without: the same position has to be a death in one case and nothing at
+## all in the other.
+func _check_phase_rule() -> void:
+	var world := SnakeWorld.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT)
+	world.reset(Vector2(GameConfig.BOARD_WIDTH * 0.5, GameConfig.BOARD_HEIGHT * 0.5), 0.0)
+	world.add_score(60)
+	world.body_length = world.target_body_length
+	world.steer(-1.0)
+
+	var curled := false
+	for _step in range(4000):
+		world.advance(GameConfig.SIM_STEP)
+		if world.hits_body(world.head_position):
+			curled = true
+			break
+	if not curled:
+		Journal.warn("selftest", "could not curl a snake into its own body")
+		return
+	ghost_curled = true
+
+	# Without the ring, this is a death.
+	var deadly := world.step(GameConfig.SIM_STEP)
+	if deadly != SnakeWorld.Outcome.DEAD_SELF:
+		Journal.warn("selftest", "a head inside its own body did not kill: %d" % deadly)
+		return
+
+	# With it, the same crossing is nothing at all.
+	world.alive = true
+	world.start_effect(SnakeWorld.Item.PHASE)
+	var survived := world.step(GameConfig.SIM_STEP)
+	ghost_passed_through = (
+		survived == SnakeWorld.Outcome.MOVING
+		and world.alive
+		and world.hits_body(world.head_position)
+	)
+	Journal.info("selftest", "phase rule: deadly without the ring, %s with it" % [
+		"harmless" if ghost_passed_through else "still deadly",
+	])
 
 
 func _run_pause() -> void:
@@ -1049,8 +1101,10 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("the ghost ring never reached the slot")
 	elif not ghost_fired:
 		failures.append("firing the ghost ring did not start the effect")
+	if not ghost_curled:
+		failures.append("the rule check never got a head inside a body")
 	elif not ghost_passed_through:
-		failures.append("the snake never walked through its own body")
+		failures.append("a head inside its own body still died with the ring running")
 
 	if debug_fps_shown <= 0:
 		failures.append("the debug readout never counted a frame rate")
