@@ -533,8 +533,12 @@ func _run_finish(game, now: float) -> void:
 	if snake == null or not snake.alive:
 		return
 	if rock_death:
+		# The bot may have found a rock on its own earlier in the run, in
+		# which case the bot was never let go of and there is nothing to
+		# wait for: the death this phase is after has already been seen.
 		if respawned and game.agent == null:
 			game.agent = _saved_agent
+		if respawned and game.agent != null:
 			_enter_phase(Phase.WAIT, now)
 		return
 	if not _rock_dropped or now - _rock_dropped_at > 8.0:
