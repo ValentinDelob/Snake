@@ -84,8 +84,6 @@ var _breath := 0.0
 var _score_note: Label
 var _score_note_time := 0.0
 var _logo: HBoxContainer
-var _streak_label: Label
-var _streak_time := 0.0
 var _theme: Theme
 
 
@@ -104,14 +102,6 @@ func _process(delta: float) -> void:
 	if _score_note_time > 0.0:
 		_score_note_time = maxf(0.0, _score_note_time - delta)
 		_score_note.modulate.a = minf(1.0, _score_note_time / 0.4)
-	if _streak_time > 0.0:
-		_streak_time = maxf(0.0, _streak_time - delta)
-		_streak_label.modulate.a = minf(1.0, _streak_time / 0.35)
-		if _streak_label.get_meta("rainbow", false):
-			_streak_label.add_theme_color_override(
-				"font_color", Color.from_hsv(fmod(_breath * 0.8, 1.0), 0.75, 1.0)
-			)
-		_breath += delta
 	if not _overlay.visible:
 		return
 	_breath += delta
@@ -270,17 +260,6 @@ func _build_top_bar() -> void:
 	_spectator_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_spectator_label.visible = false
 	_top_bar.add_child(_spectator_label)
-
-	# The streak: a big word in the middle of the screen, counting gems
-	# swallowed back to back and changing colour as the count climbs.
-	_streak_label = _label("", 40, GameConfig.MOTE_SMALL_COLOR)
-	_outline(_streak_label, 10)
-	_streak_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	_streak_label.offset_top = 96
-	_streak_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_streak_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_streak_label.modulate.a = 0.0
-	_top_bar.add_child(_streak_label)
 
 
 ## The two numbers that matter now: how long this snake is, and the longest
@@ -1109,28 +1088,6 @@ func _build_theme() -> Theme:
 	theme.default_font = font
 	theme.default_font_size = 16
 	return theme
-
-
-## Say a streak out loud: "x6 STREAK" in the middle of the screen, in a
-## colour that climbs with it - turquoise, pink, gold, then every colour.
-func announce_streak(count: int) -> void:
-	_streak_label.text = "x%d  STREAK" % count
-	var color := GameConfig.MOTE_SMALL_COLOR.darkened(0.15)
-	if count >= 6:
-		color = GameConfig.MOTE_MID_COLOR
-	if count >= 10:
-		color = GameConfig.ACCENT_COLOR
-	_streak_label.set_meta("rainbow", count >= 15)
-	_streak_label.add_theme_color_override("font_color", color)
-	_streak_label.add_theme_font_size_override("font_size", mini(64, 36 + count * 2))
-	_streak_time = 1.3
-	_streak_label.modulate.a = 1.0
-	_punch(_streak_label)
-
-
-## What the streak line says right now, for the self-test.
-func streak_readout() -> String:
-	return _streak_label.text if _streak_time > 0.0 else ""
 
 
 ## The menu wears the coloured logo; every other card, a plain title.

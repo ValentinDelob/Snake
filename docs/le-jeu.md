@@ -219,15 +219,9 @@ Aucun effet ne touche aux règles ; ils ne font que montrer ce qui se passe.
 | Vous ouvrez une caisse | une petite secousse |
 | Les 10 dernières secondes | l'horloge donne un coup à chaque seconde |
 
-**La série.** Avaler des gemmes à moins de 1,1 seconde d'intervalle forme une
-série. À partir de 3, un grand `x3 STREAK` s'affiche au centre de l'écran ;
-il grossit avec la série et change de couleur : turquoise, puis rose à 6, or
-à 10, et arc-en-ciel à partir de 15. **La série ne rapporte rien** : la
-longueur reste exactement ce qu'on a avalé. Elle est là pour le plaisir.
-
 En réseau, les gerbes d'avalement, de mort et de réapparition s'affichent
 aussi chez les clients (elles sont déduites de l'état reçu) ; les confettis
-de caisse et la série n'apparaissent que chez l'hôte et en solo.
+de caisse n'apparaissent que chez l'hôte et en solo.
 
 ## Les caméras et l'affichage
 

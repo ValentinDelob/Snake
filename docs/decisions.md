@@ -108,9 +108,12 @@ Ce qui a été décidé en chemin, et pourquoi :
   c'est possible : une mort, une réapparition ou une gemme avalée sont
   détectées en comparant l'état d'une image à l'autre. Ainsi les clients
   réseau les voient aussi, sans rien changer au protocole.
-- **La série de gemmes ne rapporte rien.** Elle aurait pu multiplier les
-  gains, mais le score *est* la longueur (voir plus haut) : elle reste
-  purement visuelle.
+- **Pas de compteur de série au centre de l'écran.** Un `x6 STREAK` qui
+  comptait les gemmes avalées à la suite a été essayé puis retiré à la
+  demande du propriétaire : il ne rapportait rien et encombrait l'image.
+  Règle retenue : **un affichage qui ne sert pas le jeu n'a pas sa place au
+  milieu de l'écran**. Les effets vivent dans le monde (gerbes, ondes), pas
+  en surimpression.
 - **Un réglage `EFFECTS`** (`FULL` / `LIGHT`) plutôt qu'un choix imposé, dans
   l'esprit du réglage de finesse du corps. `LIGHT` retire seulement le
   décoratif.

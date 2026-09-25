@@ -214,8 +214,6 @@ var _last_death_cause: SnakeWorld.Outcome = SnakeWorld.Outcome.MOVING
 var _length_on_bar := -1.0       # the length the bar is already showing
 var _best_length := 0.0          # the longest snake of this session
 var _length_lost := 0.0          # how long the snake was when it last died
-var _streak := 0                 # gems swallowed in quick succession
-var _last_gain_at := -10.0
 
 
 ## --host and --join let a test (or a shortcut) open a session immediately.
@@ -303,7 +301,6 @@ func _refresh_hud() -> void:
 	# A death is announced by itself, so only gains are called out here.
 	if state == State.PLAY and _length_on_bar >= 0.0 and length > _length_on_bar:
 		_hud.announce_score(length - _length_on_bar)
-		_count_streak()
 	_length_on_bar = length
 	if length > _best_length:
 		_best_length = length
@@ -326,21 +323,6 @@ func _refresh_hud() -> void:
 		_hud.set_item(snake.carried, snake.effect, snake.effect_time_left, total)
 	_hud.set_players(_scoreboard(), Session.local_id(), spectating)
 
-
-## Gems swallowed one after the other make a streak. It is only for show -
-## the length is what it always was - but a count going up is hard to stop.
-func _count_streak() -> void:
-	if _play_time - _last_gain_at <= GameConfig.STREAK_WINDOW:
-		_streak += 1
-	else:
-		_streak = 1
-	_last_gain_at = _play_time
-	if _streak >= GameConfig.STREAK_SHOWN_FROM:
-		_hud.announce_streak(_streak)
-
-
-func streak() -> int:
-	return _streak
 
 
 ## A short name for a peer: the network id is a huge random number.
@@ -433,7 +415,6 @@ func _on_local_death(snake: SnakeWorld) -> void:
 	stats["deaths"] = int(stats["deaths"]) + 1
 	_hud.announce_loss(_length_lost)
 	_camera.shake(GameConfig.SHAKE_DEATH)
-	_streak = 0
 
 
 func _on_matter_spat(id: int, amount: int) -> void:

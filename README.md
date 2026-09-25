@@ -38,7 +38,7 @@ game/                      the Godot project (open this folder in Godot)
     world_look.gd          sky, sun, haze and bloom: the sunlit look
     snake_mesh.gd          the body: procedural tube, quality modes
     camera_rig.gd          follow / overview / chase cameras, flat view, shake
-    hud.gd                 the frosted-glass interface, logo and streak, in code
+    hud.gd                 the frosted-glass interface and waving logo, in code
     ui/item_slot.gd        the item slot: bolt, ring and countdown
     journal.gd             autoload: structured logging
     profile_store.gd       autoload: best length and preferences

@@ -334,7 +334,3 @@ const SHAKE_DEATH := 0.8             # camera trauma when you die
 const SHAKE_NEAR_DEATH := 0.35       # when somebody dies close to you
 const SHAKE_CRATE := 0.25
 const SHAKE_NEAR := 14.0             # how close "close" is, in units
-## Swallowing gems in quick succession makes a streak: purely for show, it
-## never changes what they are worth.
-const STREAK_WINDOW := 1.1           # seconds allowed between two gems
-const STREAK_SHOWN_FROM := 3

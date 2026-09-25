@@ -77,7 +77,6 @@ seulement que :
 - le décor est bien sous un ciel ;
 - le réglage `EFFECTS` éteint et rallume le pollen ;
 - au moins dix gerbes d'effets partent pendant une manche ;
-- une série de gemmes est annoncée à l'écran ;
 - une mort secoue la caméra.
 
 **Le jugement visuel se fait sur des captures de l'exécutable réel**, dans
