@@ -35,6 +35,12 @@ const SEGMENT_SPACING := 0.42     # sampling used by collisions
 ## out - a giant is a wide, ponderous beast, never a stationary wall.
 const GIRTH_MAX := 2.4              # widest the body gets, times the base
 const GIRTH_HALF_MATTER := 45.0     # matter at which half of that is reached
+## Bringing it back up: a tenth of what is inside, and only once there is
+## something worth bringing up. What comes out lands on the floor behind
+## the snake, for anybody at all.
+const SPIT_SHARE := 0.1
+const SPIT_MINIMUM := 10
+
 const SLUGGISH_FLOOR := 0.55        # slowest it goes, as a share of cruising
 const TURN_FLOOR := 0.6             # and how tightly it can still turn
 

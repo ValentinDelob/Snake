@@ -67,6 +67,7 @@ var _debug_panel: PanelContainer
 var _debug_fps: Label
 var _shown_fps := -1
 
+var _spit_hint: Control
 var _clock: Label
 var _shown_clock := -1
 var _shown_best := -1
@@ -196,6 +197,10 @@ func _build_top_bar() -> void:
 	_item_hint = _keycap_row(["SPACE"], "fire")
 	item_column.add_child(_item_hint)
 
+	_spit_hint = _keycap_row(["E"], "bring it up")
+	_spit_hint.visible = false
+	item_column.add_child(_spit_hint)
+
 	_boost_label = _label("", 14, GameConfig.SPARK_COLOR)
 	item_column.add_child(_boost_label)
 
@@ -252,6 +257,12 @@ func set_stats(length: float, best: float, mode_text: String) -> void:
 		_best_value.text = "%.1f" % best
 	if mode_text != _mode_chip.text:
 		_mode_chip.text = mode_text
+
+
+## Whether the snake has enough inside it to bring any of it up.
+func set_can_spit(can: bool) -> void:
+	if _spit_hint.visible != can:
+		_spit_hint.visible = can
 
 
 ## How long is left on the round clock.

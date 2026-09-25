@@ -9,6 +9,7 @@ extends RefCounted
 
 signal snake_died(id: int, cause: SnakeWorld.Outcome)
 signal food_eaten(id: int)
+signal matter_spat(id: int, amount: int)
 signal item_collected(id: int, kind: SnakeWorld.Ground, roll: SnakeWorld.Item)
 signal finished(winner_id: int)
 
@@ -136,6 +137,55 @@ func _spawn_pose(index: int, count: int) -> Array:
 # --------------------------------------------------------------------------- #
 # Rocks
 # --------------------------------------------------------------------------- #
+## Bring up a tenth of what a snake has swallowed. The matter is not
+## destroyed: it lands on the floor behind the snake, where anybody -
+## including the snake that brought it up - can eat it again.
+func spit(id: int) -> int:
+	var snake: SnakeWorld = snakes.get(id)
+	if snake == null or not snake.alive:
+		return 0
+	var amount := snake.spit_amount()
+	if amount <= 0:
+		return 0
+	snake.add_score(-amount)
+	# It lands well behind the head and off to the side, so the snake does
+	# not simply swallow it again and it is not hidden under the body.
+	_scatter_matter(snake.body_points(), amount, 8)
+	matter_spat.emit(id, amount)
+	return amount
+
+
+## A snake that dies leaves everything it swallowed on the floor, spread
+## along the body it no longer has. Matter is never lost, only dropped.
+func decompose(snake: SnakeWorld) -> int:
+	var amount := snake.score
+	if amount <= 0:
+		return 0
+	var spread: PackedVector2Array = snake.body_points()
+	if spread.is_empty():
+		spread = PackedVector2Array([snake.death_position])
+	_scatter_matter(spread, amount, 0)
+	return amount
+
+
+## Lay `amount` pellets along a line of points, skipping the first few so
+## nothing lands under the head that produced them.
+func _scatter_matter(along: PackedVector2Array, amount: int, skip: int) -> void:
+	if along.is_empty() or amount <= 0:
+		return
+	# A short snake has fewer points than the skip asks for: start wherever
+	# there is something rather than off the end of the body.
+	var first := mini(skip, along.size() - 1)
+	var usable := maxi(1, along.size() - first)
+	for index in range(amount):
+		var at: Vector2 = along[mini(first + (index * usable) / amount, along.size() - 1)]
+		var jitter := Vector2(_rng.randf_range(-1.3, 1.3), _rng.randf_range(-1.3, 1.3))
+		food.append(Vector2(
+			clampf(at.x + jitter.x, 0.6, width - 0.6),
+			clampf(at.y + jitter.y, 0.6, height - 0.6)
+		))
+
+
 ## How many pellets this arena should hold.
 func field_size() -> int:
 	return maxi(GameConfig.FOOD_MIN, int(width * height / GameConfig.FOOD_PER_AREA))
@@ -341,10 +391,12 @@ func step(delta: float) -> void:
 			continue
 		var outcome := snake.step(delta)
 		if SnakeWorld.is_death(outcome):
+			decompose(snake)
 			snake_died.emit(id, outcome)
 			continue
 		if blocked_by_obstacle(snake.head_position, snake.radius):
 			snake.kill(snake.head_position)
+			decompose(snake)
 			snake_died.emit(id, SnakeWorld.Outcome.DEAD_ROCK)
 			continue
 		_check_bite(id, snake)
@@ -373,6 +425,7 @@ func _check_bite(id: int, snake: SnakeWorld) -> void:
 			continue
 		if other.hits_body(snake.head_position, 0.0):
 			snake.kill(snake.head_position)
+			decompose(snake)
 			snake_died.emit(id, SnakeWorld.Outcome.DEAD_OTHER)
 			return
 
@@ -385,7 +438,10 @@ func _check_food(id: int, snake: SnakeWorld) -> void:
 			continue
 		food.remove_at(index)
 		snake.add_score(1)
-		sow_one()
+		# The field is kept at its size, but what a snake brought up or left
+		# behind counts towards it: sowing on top of that would flood it.
+		if food.size() < field_size():
+			sow_one()
 		food_eaten.emit(id)
 		return
 

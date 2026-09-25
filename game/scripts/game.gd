@@ -91,6 +91,7 @@ func _ready() -> void:
 	game_match = SnakeMatch.new(GameConfig.BOARD_WIDTH, GameConfig.BOARD_HEIGHT, _seed)
 	game_match.snake_died.connect(_on_snake_died)
 	game_match.food_eaten.connect(_on_food_eaten)
+	game_match.matter_spat.connect(_on_matter_spat)
 	game_match.item_collected.connect(_on_item_collected)
 	game_match.finished.connect(_on_match_finished)
 	_board.build(game_match.width, game_match.height)
@@ -298,6 +299,7 @@ func _refresh_hud() -> void:
 		"%s %s" % [_camera.view_name().to_upper(), _camera.mode_name()]
 	)
 	_hud.set_clock(game_match.time_left())
+	_hud.set_can_spit(snake != null and snake.alive and snake.spit_amount() > 0)
 	_hud.set_debug(bool(PlayerProfile.get_preference("debug")))
 	if snake == null:
 		_hud.set_item(0, 0, 0.0, 1.0)
@@ -385,6 +387,12 @@ func _on_local_death(snake: SnakeWorld) -> void:
 	stats["max_score"] = maxi(int(stats["max_score"]), snake.score)
 	stats["deaths"] = int(stats["deaths"]) + 1
 	_hud.announce_loss(_length_lost)
+
+
+func _on_matter_spat(id: int, amount: int) -> void:
+	var snake: SnakeWorld = game_match.snakes[id]
+	_board.play_pickup_flash(snake.head_position, _elapsed, GameConfig.FOOD_COLOR)
+	Journal.info("game", "%s brought up %d matter" % [_player_name(id), amount])
 
 
 func _on_food_eaten(id: int) -> void:
@@ -883,6 +891,8 @@ func _play_key(keycode: int) -> void:
 		_enter_menu()
 	elif keycode == KEY_SPACE:
 		_use_item()
+	elif keycode == KEY_E:
+		_spit()
 	elif keycode == KEY_P:
 		_toggle_pause()
 	elif keycode == KEY_C:
@@ -907,6 +917,28 @@ func _demo_key(keycode: int) -> void:
 		Journal.info("game", "Demo: a crate dropped, rigged with %s" % [
 			"a bonus" if _demo_crate_bonus else "the curse",
 		])
+
+
+## Bring up a tenth of what the snake has swallowed. It lands on the floor
+## behind it, for anybody to eat - including whoever brought it up.
+func _spit() -> void:
+	var snake = local_snake()
+	if snake == null or not snake.alive:
+		return
+	if Session.role == Session.Role.CLIENT:
+		_request_spit.rpc_id(1)
+		return
+	var amount := game_match.spit(Session.local_id())
+	if amount <= 0:
+		Journal.debug("game", "Nothing worth bringing up yet")
+
+
+## Client to host: I am spitting.
+@rpc("any_peer", "call_remote", "reliable")
+func _request_spit() -> void:
+	if not Session.is_host():
+		return
+	game_match.spit(multiplayer.get_remote_sender_id())
 
 
 func _use_item() -> void:

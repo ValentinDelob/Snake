@@ -13,12 +13,14 @@ extends RefCounted
 ## Injected key events go through the normal input pipeline, so the test
 ## exercises the same code path as a player.
 
-enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, GHOST, PAUSE, FINISH, WAIT }
+enum Phase { CAMERAS, TURNS, BOOST, CRATE_BONUS, CRATE_MALUS, SCORE_UP, SCORE_DOWN, GHOST, SPIT, PAUSE, FINISH, WAIT }
 
 const PAUSE_FRAMES := 30
 ## Matter fed to the snake before the ghost ring phase, so its body is well
 ## over twice the circle it can turn in.
 const GHOST_TEST_MATTER := 45
+## And before bringing matter up, so a tenth of it is a round number.
+const SPIT_TEST_MATTER := 20
 const MIN_ACCEPTABLE_FPS := 25.0
 const TURN_HOLD := 0.7
 const SPACING_TOLERANCE := 0.25
@@ -91,6 +93,20 @@ var _ghost_curling := false
 var _ghost_press_sent := false
 var _rule_checked := false
 var ghost_curled := false
+
+## bringing matter back up, and what a death leaves behind
+var spit_refused := false
+var spit_taken := 0
+var spit_dropped := 0
+var matter_left_behind := 0
+var _spit_requested := false
+var _spit_floor_checked := false
+var _spit_floor_score := 0
+var _spit_before_score := 0
+var _spit_before_field := 0
+var _spit_expected := 0
+var _field_before_death := 0
+var _score_before_death := 0
 
 ## dying costs a snake its length, not its round
 var respawned := false
@@ -335,7 +351,19 @@ func _on_play(game) -> void:
 
 	var now: float = game.play_time()
 	var alive: bool = snake_alive(game)
+	if _was_alive and alive:
+		# Kept one frame behind, so that when a death lands the state from
+		# just before it is still readable.
+		var living = game.local_snake()
+		_field_before_death = game.game_match.food.size()
+		_score_before_death = living.score if living != null else 0
 	if _was_alive and not alive:
+		var left: int = game.game_match.food.size() - _field_before_death
+		if _score_before_death > 0 and left > matter_left_behind:
+			matter_left_behind = left
+			Journal.info("selftest", "a snake worth %d matter left %d on the floor" % [
+				_score_before_death, left,
+			])
 		# The snake was lost. The round carries on without it, but whatever
 		# this phase was holding has to be let go of. The cause is only
 		# readable here now: nothing shows a game over screen any more.
@@ -369,6 +397,8 @@ func _on_play(game) -> void:
 			_run_score_down(game, now)
 		Phase.GHOST:
 			_run_ghost(game, now)
+		Phase.SPIT:
+			_run_spit(game, now)
 		Phase.PAUSE:
 			_run_pause()
 		Phase.FINISH:
@@ -817,7 +847,7 @@ func _run_ghost(game, now: float) -> void:
 		if snake.effect == SnakeWorld.Item.PHASE:
 			ghost_fired = true
 			Journal.info("selftest", "the ghost second is running")
-			_enter_phase(Phase.PAUSE, now)
+			_enter_phase(Phase.SPIT, now)
 		elif now - _phase_started > 1.5:
 			_ghost_press_sent = false     # the press was lost: try again
 			_ghost_requested = false
@@ -864,6 +894,55 @@ func _check_phase_rule() -> void:
 	Journal.info("selftest", "phase rule: deadly without the ring, %s with it" % [
 		"harmless" if ghost_passed_through else "still deadly",
 	])
+
+
+## Bringing matter back up: a snake with nothing much inside it must not
+## be able to, and one that is full must lose exactly a tenth of it onto
+## the floor, where it can be eaten again.
+func _run_spit(game, now: float) -> void:
+	var snake = game.local_snake()
+	if snake == null or not snake.alive:
+		return
+
+	# An empty snake first: there is nothing to bring up, and asking must
+	# change nothing. Asked of the rules directly, because a snake left to
+	# itself for half a second on a field this rich is no longer empty.
+	if not _spit_floor_checked:
+		snake.add_score(-snake.score)
+		snake.body_length = snake.target_body_length
+		_spit_floor_score = snake.score
+		spit_refused = (
+			snake.spit_amount() == 0
+			and game.game_match.spit(Session.local_id()) == 0
+			and snake.score == _spit_floor_score
+		)
+		_spit_floor_checked = true
+		Journal.info("selftest", "an empty snake brought up nothing: %s" % spit_refused)
+		return
+
+	if not _spit_requested:
+		if snake.score < SPIT_TEST_MATTER:
+			snake.add_score(SPIT_TEST_MATTER - snake.score)
+			snake.body_length = snake.target_body_length
+		_spit_before_score = snake.score
+		_spit_before_field = game.game_match.food.size()
+		_spit_expected = snake.spit_amount()
+		Journal.info("selftest", "bringing up a tenth of %d matter" % _spit_before_score)
+		press(KEY_E)
+		release(KEY_E)
+		_spit_requested = true
+		_phase_started = now
+		return
+
+	if snake.score < _spit_before_score:
+		spit_taken = _spit_before_score - snake.score
+		spit_dropped = game.game_match.food.size() - _spit_before_field
+		Journal.info("selftest", "brought up %d of %d expected, %d landed on the floor" % [
+			spit_taken, _spit_expected, spit_dropped,
+		])
+		_enter_phase(Phase.PAUSE, now)
+	elif now - _phase_started > 2.0:
+		_spit_requested = false       # the press was lost: try again
 
 
 func _run_pause() -> void:
@@ -986,13 +1065,14 @@ func summary(game) -> String:
 			peers_seen, arena_seen.x, arena_seen.y, remote_moved, winner_id, spectated, rocks_seen,
 			stats["games"], stats["frames"], stats["fps"],
 		]
-	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
+	return "states=%s views=%s cameras=%s turns=%s boost(peak x%.2f, after x%.2f) slow(floor x%.2f, after x%.2f) crate(bonus=%s, curse=%s) faces%s pacing(limits=%d, vsync=%d) debug(fps=%d, hides=%s) ghost(slot=%s, fired=%s, through=%s) round(respawned=%s, ended=%s) spit(refused=%s, %d up, %d down, corpse=%d) cards(+%d/%+.1fu, -%d/%+.1fu, floor=%s at %.1fu) rocks(%d, r%.1f-%.1f, lane=%.0f, lanes_clear=%s, fatal=%s) games=%d best=%d steps=%d frames=%d fps=%.1f" % [
 		str(states_seen.keys()), str(views_seen.keys()), str(cameras_seen.keys()),
 		str(turns_seen.keys()), max_multiplier, multiplier_after_boost,
 		min_multiplier, multiplier_after_slow, crate_bonus_in_slot, crate_malus_forced,
 		str(quality_faces), fps_limits_seen.size(), vsync_states_seen.size(),
 		debug_fps_shown, debug_hidden,
 		ghost_collected, ghost_fired, ghost_passed_through, respawned, round_ended,
+		spit_refused, spit_taken, spit_dropped, matter_left_behind,
 		score_card_gain, length_after_gain, score_card_loss, -length_after_loss,
 		score_floor_held, length_after_floor,
 		rocks_seen, rock_smallest, rock_largest, lane_kept, spawn_lanes_clear, rock_death,
@@ -1139,6 +1219,16 @@ func _verify_solo(stats: Dictionary) -> Array:
 		failures.append("driving into a rock did not kill the snake")
 	if not respawned:
 		failures.append("a snake that died never came back")
+	if not spit_refused:
+		failures.append("an almost empty snake was still able to bring matter up")
+	if spit_taken != _spit_expected or spit_taken <= 0:
+		failures.append("brought up %d matter, expected %d" % [spit_taken, _spit_expected])
+	elif spit_dropped < spit_taken:
+		failures.append("%d matter came up but only %d landed on the floor" % [
+			spit_taken, spit_dropped,
+		])
+	if matter_left_behind <= 0:
+		failures.append("a snake that died left nothing behind")
 	if not round_ended:
 		failures.append("the round never ended on the clock")
 

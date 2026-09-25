@@ -266,6 +266,14 @@ static func length_for_score(value: int) -> float:
 # --------------------------------------------------------------------------- #
 # Items
 # --------------------------------------------------------------------------- #
+## How much would come up if the snake were to spit now: a tenth of what
+## it has swallowed, and nothing at all below the threshold.
+func spit_amount() -> int:
+	if score < GameConfig.SPIT_MINIMUM:
+		return 0
+	return maxi(1, int(round(float(score) * GameConfig.SPIT_SHARE)))
+
+
 ## Fire the carried item. Returns false when there is nothing to fire.
 func use_item() -> bool:
 	if carried == Item.NONE:
